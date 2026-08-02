@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+publish/
+*.user
+
+# Test / coverage
+TestResults/
+*.coverage
+*.trx
+
+# Parity-run scratch (see README "Checking against the reference implementation")
+py.txt
+cs.txt
