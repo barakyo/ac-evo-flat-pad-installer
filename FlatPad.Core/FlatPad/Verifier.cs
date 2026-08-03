@@ -231,7 +231,7 @@ public sealed class Verifier(string gameRoot)
             if (n.Number != 2 || n.Message is null)
                 continue;
             string name = SceneNodes.Name(n);
-            float? want = OvalRadius(name);
+            double? want = OvalRadius(name);
             if (want is null)
                 continue;
 

@@ -101,6 +101,10 @@ public static class SceneNodes
         return hit;
     }
 
+    /// <remarks>
+    /// Marks the chain down to each control point dirty as it goes, so a caller that MOVES a point
+    /// gets its re-encode for free. Harmless for a caller that only reads.
+    /// </remarks>
     private static bool Walk(PbNode n, Action<PbNode> fn)
     {
         if (n.Message is null)
@@ -108,6 +112,7 @@ public static class SceneNodes
         if (IsControlPoint(n))
         {
             fn(n.First(1)!);
+            n.Dirty = true;
             return true;
         }
 
@@ -118,6 +123,8 @@ public static class SceneNodes
                 found = true;
         }
 
+        if (found)
+            n.Dirty = true;
         return found;
     }
 

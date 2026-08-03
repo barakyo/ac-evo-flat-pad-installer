@@ -6,7 +6,11 @@ using FlatPad.Core.FlatPad;
 const string Usage = """
     Flat Pad Installer — dev CLI
 
-      verify --game <path to Assetto Corsa EVO>    check an existing install (read-only)
+      install   --game <path>    build + register the track (idempotent)
+      uninstall --game <path>    remove it and restore stock content
+      verify    --game <path>    check an existing install (read-only)
+
+    <path> is the Assetto Corsa EVO folder, which must be UNPACKED.
 
     """;
 
@@ -32,27 +36,43 @@ for (int i = 1; i < args.Length; i++)
     }
 }
 
-switch (command)
+if (gameRoot is null)
 {
-    case "verify":
-        if (gameRoot is null)
-        {
-            Console.Error.WriteLine("--game is required");
+    Console.Error.WriteLine("--game is required");
+    return 2;
+}
+
+if (!Directory.Exists(Path.Combine(gameRoot, "content", "tracks")))
+{
+    Console.Error.WriteLine($"no content/tracks under {gameRoot} — is the game unpacked?");
+    return 2;
+}
+
+try
+{
+    switch (command)
+    {
+        case "verify":
+            VerifyReport report = new Verifier(gameRoot).Run();
+            Console.Out.Write(report.Render());
+            return report.ExitCode;
+
+        case "install":
+            new Installer(gameRoot, Console.Out.WriteLine).Install();
+            return 0;
+
+        case "uninstall":
+            new Installer(gameRoot, Console.Out.WriteLine).Uninstall();
+            return 0;
+
+        default:
+            Console.Error.WriteLine($"unknown command: {command}");
+            Console.Error.Write(Usage);
             return 2;
-        }
-
-        if (!Directory.Exists(Path.Combine(gameRoot, "content", "tracks")))
-        {
-            Console.Error.WriteLine($"no content/tracks under {gameRoot} — is the game unpacked?");
-            return 2;
-        }
-
-        VerifyReport report = new Verifier(gameRoot).Run();
-        Console.Out.Write(report.Render());
-        return report.ExitCode;
-
-    default:
-        Console.Error.WriteLine($"unknown command: {command}");
-        Console.Error.Write(Usage);
-        return 2;
+    }
+}
+catch (InstallException e)
+{
+    Console.Error.WriteLine(e.Message);
+    return 1;
 }

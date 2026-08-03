@@ -66,16 +66,22 @@ public static class FlatPadSpec
     /// <summary>The surface the car spawns on. It is one of the donor's own meshes, so it collides.</summary>
     public const string PadMesh = "concrete_in007.mesh";
 
+    // ⚠️ Every geometry constant here is a DOUBLE, and all derived arithmetic stays in double until
+    // the moment a value is packed as a 32-bit float. 18.6 is not representable in binary, so
+    // `(float)18.6 + 0.3f` and `(float)(18.6 + 0.3)` land on different bits — and the reference
+    // implementation computes in Python floats, which are doubles. Anything else silently produces
+    // an install that is *almost* byte-identical.
+
     /// <summary>Flat plane height, just above the pit surface.</summary>
-    public const float PadY = 18.6f;
+    public const double PadY = 18.6;
 
     /// <summary>Target X and Z extent of the pad, in metres.</summary>
-    public const float PadSizeM = 1500.0f;
+    public const double PadSizeM = 1500.0;
 
     /// <summary>Pit-cluster centre; spawns land here, on the pad.</summary>
-    public const float SpawnX = -219.0f;
+    public const double SpawnX = -219.0;
 
-    public const float SpawnZ = 164.0f;
+    public const double SpawnZ = 164.0;
 
     /// <summary>
     /// Spawn containers to relocate onto the pad, as (filename, grid spread in metres). Every
@@ -83,11 +89,11 @@ public static class FlatPadSpec
     /// the grid — so all of them must move, or that mode spawns at the donor circuit and drops off
     /// the pad edge.
     /// </summary>
-    public static readonly (string File, float Spread)[] SpawnFiles =
+    public static readonly (string File, double Spread)[] SpawnFiles =
     [
-        ($"spawnpoints_pitlane_{Layout}.scene", 0.0f),
-        ($"spawnpoints_hotlap_{Layout}.scene", 0.0f),
-        ($"spawnpoints_grid_{Layout}.scene", 8.0f),
+        ($"spawnpoints_pitlane_{Layout}.scene", 0.0),
+        ($"spawnpoints_hotlap_{Layout}.scene", 0.0),
+        ($"spawnpoints_grid_{Layout}.scene", 8.0),
     ];
 
     // ----------------------------------------------------------------- pitlane zones
@@ -101,12 +107,12 @@ public static class FlatPadSpec
     public const string PitZoneKeep = $"pitlane_zone_main_{Layout}";
 
     /// <summary>Its half-extent: big enough to hold the car reliably, small enough to avoid.</summary>
-    public const float PitBoxRadiusM = 30.0f;
+    public const double PitBoxRadiusM = 30.0;
 
     /// <summary>XZ offset for the rest — well beyond the 1.5 km pad.</summary>
-    public const float PitZoneExileX = 100000.0f;
+    public const double PitZoneExileX = 100000.0;
 
-    public const float PitZoneExileZ = 100000.0f;
+    public const double PitZoneExileZ = 100000.0;
 
     // ----------------------------------------------------------------- layout splines
     /// <summary>
@@ -121,23 +127,25 @@ public static class FlatPadSpec
     /// line out of the spawn perpendicular to the loop, so driving away in any direction reads as
     /// neither forward nor reverse.
     /// </remarks>
-    public const bool ReshapeLayout = true;
+    // Deliberately not `const`: it is an escape hatch worth keeping compilable, and folding it away
+    // turns the other branch into an "unreachable code" error.
+    public static readonly bool ReshapeLayout = true;
 
     /// <summary>1.0 = circle (the pad is square); &gt;1 stretches X.</summary>
-    public const float OvalAspect = 1.0f;
+    public const double OvalAspect = 1.0;
 
     /// <summary>Spline radii from the spawn, in metres. Left/right are resolved from the donor.</summary>
-    public static readonly (string Name, float Radius)[] OvalRadii =
+    public static readonly (string Name, double Radius)[] OvalRadii =
     [
-        ($"{Layout}_track_limits_left", 650.0f),   // OUTER edge
-        ($"{Layout}_center_spline", 430.0f),       // the racing line
-        ($"{Layout}_ideal_line", 430.0f),
-        ($"{Layout}_track_limits_right", 150.0f),  // INNER edge; the pit box sits inside it
+        ($"{Layout}_track_limits_left", 650.0),   // OUTER edge
+        ($"{Layout}_center_spline", 430.0),       // the racing line
+        ($"{Layout}_ideal_line", 430.0),
+        ($"{Layout}_track_limits_right", 150.0),  // INNER edge; the pit box sits inside it
     ];
 
-    public static float? OvalRadius(string name)
+    public static double? OvalRadius(string name)
     {
-        foreach ((string n, float r) in OvalRadii)
+        foreach ((string n, double r) in OvalRadii)
         {
             if (n == name)
                 return r;
