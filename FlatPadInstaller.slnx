@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="FlatPad.App/FlatPad.App.csproj" />
   <Project Path="FlatPad.Cli/FlatPad.Cli.csproj" />
   <Project Path="FlatPad.Core.Tests/FlatPad.Core.Tests.csproj" />
   <Project Path="FlatPad.Core/FlatPad.Core.csproj" />

@@ -4,10 +4,10 @@ A one-click installer for **Flat Pad** — a 1.5 km dead-flat, wall-free, scener
 *Assetto Corsa EVO* that spawns your car ready to drive. Built for physics testing, where driving
 800 m across a real circuit before every run gets old fast.
 
-> **Status: in progress.** The reference implementation is a Python script; this is the C# port that
-> turns it into a distributable Windows app. Install, uninstall and verify all work today — the port
-> produces a **byte-identical** track to the Python's, all 1530 files. Still to come: detecting and
-> unpacking the game archive, and the GUI.
+> **Status: feature-complete, not yet released.** A Python script is still the reference
+> implementation; this C# port produces a **byte-identical** track to it — all 1530 files — and adds
+> game detection, archive unpacking and a GUI. What has *not* been exercised end-to-end here is a
+> full unpack of a packed install (see [Verification](#verification)).
 
 ## How it works, and why it isn't just a zip
 
@@ -18,40 +18,67 @@ ships the *recipe*, never the output.
 
 A zipped track folder would not work anyway. A track only appears in the menus once it is registered
 in two `system\*.table` registries, and the game has to be running **unpacked** — tracks, unlike
-cars, are not loaded from `Saved Games\ACE\mods\`. The installer handles all of it, and reverts it.
+cars, are not loaded from `Saved Games\ACE\mods\`. The installer handles all of that, and reverts it.
 
 Base-game content is left byte-identical to what Kunos ships. The two registries are always rebuilt
 from a `.orig` snapshot rather than appended to, so re-running can never stack duplicate entries.
 
+### Unpacking is the big, slow part
+
+Unpacking roughly **doubles the install**: the archive is kept (renamed `content.kspkg.bak`) and its
+~70 GB of contents are written out alongside. The tool computes that figure from your archive rather
+than hardcoding it, shows it before touching anything, and makes unpacking an explicit confirmed
+step. **Nothing is renamed until every file is out**, so cancelling or crashing halfway leaves the
+game exactly as playable as it was.
+
+While unpacked, do **not** use Steam's *Verify integrity of game files* — it re-downloads the whole
+archive. A game update also restores packed mode; re-running the tool fixes that.
+
 ## Building
 
-Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download).
+Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download), and the submodule:
 
 ```
+git submodule update --init
 dotnet build FlatPadInstaller.slnx
 dotnet test  FlatPadInstaller.slnx
 ```
 
+A portable single-file build — one ~49 MB `.exe`, no runtime to install first:
+
+```
+dotnet publish FlatPad.App -c Release -o out
+```
+
 ## Using the dev CLI
 
+The GUI is the product; this exists so the logic can be driven, and diffed against the reference
+implementation, without one.
+
 ```
-dotnet run --project FlatPad.Cli -- install   --game "<path to Assetto Corsa EVO>"
-dotnet run --project FlatPad.Cli -- uninstall --game "<path>"
-dotnet run --project FlatPad.Cli -- verify    --game "<path>"
+dotnet run --project FlatPad.Cli -- status
+dotnet run --project FlatPad.Cli -- unpack
+dotnet run --project FlatPad.Cli -- install
+dotnet run --project FlatPad.Cli -- verify
+dotnet run --project FlatPad.Cli -- uninstall
+dotnet run --project FlatPad.Cli -- revert
+dotnet run --project FlatPad.Cli -- check-unpack
 ```
 
-`--game` becomes optional once auto-detection lands; for now pass it explicitly. All three are
-idempotent. `verify` is read-only, and reports a **count** for every check — a validator that finds
-nothing to check would otherwise print a cheerful `PASS`.
+`--game <path>` is auto-detected from Steam if omitted. Every command is idempotent, and Ctrl+C
+cancels cleanly. `verify` is read-only, and reports a **count** for every check — a validator that
+finds nothing to check would otherwise print a cheerful `PASS`. `check-unpack` samples the loose
+files against the archive they came from, which is how you tell a finished unpack from one that
+quietly ran out of disk.
 
-`--pr-runoff-spawn` from the Python is deliberately not ported: it moves a spawn on a *base-game*
-track, which is the one thing this tool exists to avoid. `uninstall` still reverts it if an older
-run left it behind.
+`--pr-runoff-spawn` from the Python is deliberately **not** ported: it moves a spawn on a *base-game*
+track, the one thing this tool exists to avoid. `uninstall` still reverts it if an older run left it
+behind.
 
-## Checking against the reference implementation
+## Verification
 
-The Python script in the parent project stays authoritative until the port is confirmed in-game.
-The two agree byte-for-byte, on the console output *and* on the files produced:
+The Python script stays authoritative until the port is confirmed in-game. The two agree
+byte-for-byte, on the console output *and* on the files produced:
 
 ```
 uv run python ../tracks/install_flatpad.py --verify           > py.txt
@@ -62,6 +89,14 @@ diff py.txt cs.txt
 ( cd "<game>" && find content/tracks/flatpad -type f | sort | xargs sha256sum ) > tree.sha256
 ```
 
+| | |
+|---|---|
+| Track build | **Byte-identical** to the Python across all 1530 files, from a warm install and a cold start. Uninstall matches too. |
+| Verify | Console output byte-identical, on a passing install *and* on a deliberately broken one. |
+| Archive reading | 201 files sampled from a real 68.5 GB archive extract byte-identical to disk, across a 114,685-entry table. |
+| **Full unpack** | **Not run end-to-end.** The test machine's game was already unpacked, and a real run writes ~70 GB. The extraction loop is covered by the sampling above; the final rename and the free-space guard are not. |
+| Unit tests | 67, covering the format layer, the closure crawl, the geometry edits and the archive state machine. |
+
 ## Layout
 
 | | |
@@ -70,7 +105,9 @@ diff py.txt cs.txt
 | `FlatPad.Core/Refs` | Reference extraction, the `content\…` closure crawl, and copy-with-repath. |
 | `FlatPad.Core/Scene` | Reading and reshaping the geometry a track scene is made of. |
 | `FlatPad.Core/Tables` | The `system\*.table` registry editor. |
+| `FlatPad.Core/Game` | Finding the install, and switching it between packed and unpacked. |
 | `FlatPad.Core/FlatPad` | The Flat Pad recipe itself: build, install, uninstall, verify. |
+| `FlatPad.App` | The WinForms GUI — a thin shell, no logic of its own. |
 | `FlatPad.Cli` | Dev entry point. Not shipped. |
 
 ## Licence

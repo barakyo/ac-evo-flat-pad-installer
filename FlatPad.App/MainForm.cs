@@ -1,0 +1,449 @@
+using System.Diagnostics;
+
+using FlatPad.Core.FlatPad;
+using FlatPad.Core.Game;
+
+namespace FlatPad.App;
+
+/// <summary>
+/// The whole UI: pick the game, see what state it is in, and change that state.
+/// </summary>
+/// <remarks>
+/// Deliberately a thin shell. Everything it calls lives in <c>FlatPad.Core</c> and is covered by
+/// tests and by a byte-for-byte comparison against the reference implementation, so there is no
+/// logic here worth hiding behind a button.
+///
+/// Two rules the layout exists to serve: nothing expensive or irreversible happens without being
+/// shown its cost first, and every long operation runs off the UI thread with a Cancel that works.
+/// </remarks>
+internal sealed class MainForm : Form
+{
+    private readonly TextBox _gamePath = new() { Dock = DockStyle.Fill };
+    private readonly Button _browse = new() { Text = "Browse…", AutoSize = true };
+    private readonly Label _detected = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
+
+    // A two-column grid rather than one padded label: colons lined up with spaces only line up in a
+    // monospace font, and the rest of the window is not monospace.
+    private readonly TableLayoutPanel _statusGrid = new()
+    {
+        ColumnCount = 2, RowCount = 3, AutoSize = true, Dock = DockStyle.Top,
+        AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(0, 6, 0, 6),
+    };
+
+    private readonly Label _archiveValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly Label _installedValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly Label _diskValue = new() { AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly Label _statusMessage = new()
+    {
+        AutoSize = true, Padding = new Padding(0, 6, 0, 6), Visible = false,
+    };
+    private readonly Label _warning = new()
+    {
+        AutoSize = true,
+        MaximumSize = new Size(560, 0),
+        ForeColor = Color.FromArgb(150, 90, 0),
+        Padding = new Padding(0, 0, 0, 6),
+    };
+
+    private readonly Button _unpack = new() { Text = "Unpack game", AutoSize = true };
+    private readonly Button _revert = new() { Text = "Revert to packed", AutoSize = true };
+    private readonly Button _install = new() { Text = "Install Flat Pad", AutoSize = true };
+    private readonly Button _uninstall = new() { Text = "Uninstall", AutoSize = true };
+    private readonly Button _verify = new() { Text = "Verify", AutoSize = true };
+    private readonly Button _cancel = new() { Text = "Cancel", AutoSize = true, Enabled = false };
+
+    private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Height = 18, Visible = false };
+    private readonly Label _progressText = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
+
+    private readonly CheckBox _showLog = new() { Text = "Show log", AutoSize = true };
+    private readonly TextBox _log = new()
+    {
+        Dock = DockStyle.Fill,
+        Multiline = true,
+        ReadOnly = true,
+        ScrollBars = ScrollBars.Vertical,
+        WordWrap = false,
+        BackColor = Color.White,
+        Font = new Font(FontFamily.GenericMonospace, 8.5f),
+        Visible = false,
+    };
+
+    private CancellationTokenSource? _cancellation;
+
+    public MainForm()
+    {
+        Text = "Assetto Corsa EVO — Flat Pad Installer";
+        Font = SystemFonts.MessageBoxFont ?? Font;
+        MinimumSize = new Size(640, 300);
+        AutoSizeMode = AutoSizeMode.GrowOnly;
+        Size = new Size(680, 380);
+        StartPosition = FormStartPosition.CenterScreen;
+
+        Controls.Add(BuildLayout());
+
+        _browse.Click += (_, _) => Browse();
+        _gamePath.TextChanged += (_, _) => RefreshState();
+        _showLog.CheckedChanged += (_, _) => ToggleLog();
+        _cancel.Click += (_, _) => _cancellation?.Cancel();
+
+        _unpack.Click += async (_, _) => await UnpackAsync();
+        _revert.Click += (_, _) => Revert();
+        _install.Click += async (_, _) => await RunAsync("Installing Flat Pad",
+            log => new Installer(GameRoot, log).Install());
+        _uninstall.Click += async (_, _) => await RunAsync("Removing Flat Pad",
+            log => new Installer(GameRoot, log).Uninstall());
+        _verify.Click += async (_, _) => await RunAsync("Verifying",
+            log => log(new Verifier(GameRoot).Run().Render().TrimEnd()));
+
+        string? found = GameLocator.Find();
+        _gamePath.Text = found ?? "";
+        _detected.Text = found is not null
+            ? "auto-detected from Steam"
+            : "Steam install not found — browse to the game folder";
+        RefreshState();
+    }
+
+    private string GameRoot => _gamePath.Text.Trim();
+
+    private Control BuildLayout()
+    {
+        var pathRow = new TableLayoutPanel
+        {
+            ColumnCount = 3, RowCount = 1, AutoSize = true, Dock = DockStyle.Top,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        pathRow.Controls.Add(new Label { Text = "Game", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        pathRow.Controls.Add(_gamePath, 1, 0);
+        pathRow.Controls.Add(_browse, 2, 0);
+
+        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(0, 4, 0, 4) };
+        buttons.Controls.AddRange([_unpack, _revert, _install, _uninstall, _verify, _cancel]);
+
+        var progressRow = new TableLayoutPanel
+        {
+            ColumnCount = 1, AutoSize = true, Dock = DockStyle.Top,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        progressRow.Controls.Add(_progress, 0, 0);
+        progressRow.Controls.Add(_progressText, 0, 1);
+
+        _statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _statusGrid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        string[] captions = ["Game archive", "Flat Pad", "Disk"];
+        Label[] values = [_archiveValue, _installedValue, _diskValue];
+        for (int row = 0; row < captions.Length; row++)
+        {
+            _statusGrid.Controls.Add(new Label
+            {
+                Text = captions[row], AutoSize = true, Anchor = AnchorStyles.Left,
+                ForeColor = SystemColors.GrayText, Margin = new Padding(0, 3, 18, 3),
+            }, 0, row);
+            values[row].Margin = new Padding(0, 3, 0, 3);
+            _statusGrid.Controls.Add(values[row], 1, row);
+        }
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8, Padding = new Padding(12),
+        };
+        for (int i = 0; i < 7; i++)
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        root.Controls.Add(pathRow, 0, 0);
+        root.Controls.Add(_detected, 0, 1);
+        root.Controls.Add(_statusMessage, 0, 2);
+        root.Controls.Add(_statusGrid, 0, 3);
+        root.Controls.Add(_warning, 0, 4);
+        root.Controls.Add(buttons, 0, 5);
+        root.Controls.Add(progressRow, 0, 6);
+        root.Controls.Add(_log, 0, 7);
+
+        var bottom = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Bottom, Padding = new Padding(12, 0, 12, 8) };
+        bottom.Controls.Add(_showLog);
+
+        var host = new Panel { Dock = DockStyle.Fill };
+        host.Controls.Add(root);
+        host.Controls.Add(bottom);
+        return host;
+    }
+
+    // ------------------------------------------------------------------ state
+
+    private void RefreshState()
+    {
+        if (!GameLocator.LooksLikeGame(GameRoot))
+        {
+            _statusMessage.Text = GameRoot.Length == 0
+                ? "No game folder selected."
+                : "That folder does not contain AssettoCorsaEVO.exe.";
+            _statusMessage.Visible = true;
+            _statusGrid.Visible = false;
+            _warning.Text = "";
+            SetEnabled(unpack: false, revert: false, install: false, uninstall: false, verify: false);
+            return;
+        }
+
+        _statusMessage.Visible = false;
+        _statusGrid.Visible = true;
+
+        GameArchiveState archive = GameArchive.Detect(GameRoot);
+        bool installed = Directory.Exists(Path.Combine(GameRoot, "content", "tracks", "flatpad"));
+
+        string archiveLine = archive.Mode switch
+        {
+            ArchiveMode.Packed =>
+                $"PACKED ({Path.GetFileName(archive.LivePackage)}, {GameArchive.Bytes(archive.ArchiveBytes)})",
+            ArchiveMode.Unpacked => "UNPACKED — loose content, so modded tracks load",
+            _ => "unrecognised",
+        };
+
+        string diskLine = $"{GameArchive.Bytes(archive.FreeBytes)} free";
+        if (archive.Mode == ArchiveMode.Packed)
+        {
+            diskLine += $" — unpacking needs about {GameArchive.Bytes(archive.RequiredBytes)}"
+                        + " (the archive is kept, so budget roughly twice its size)";
+        }
+
+        _archiveValue.Text = archiveLine;
+        _installedValue.Text = installed ? "installed" : "not installed";
+        _diskValue.Text = diskLine;
+        _warning.Text = BuildWarning(archive);
+
+        SetEnabled(
+            unpack: archive.Mode == ArchiveMode.Packed,
+            revert: archive.Mode == ArchiveMode.Unpacked && archive.DisabledPackages.Count == 1,
+            install: archive.Mode == ArchiveMode.Unpacked,
+            uninstall: archive.Mode == ArchiveMode.Unpacked && installed,
+            verify: archive.Mode == ArchiveMode.Unpacked && installed);
+    }
+
+    private static string BuildWarning(GameArchiveState archive)
+    {
+        var lines = new List<string>();
+        if (archive.Mode == ArchiveMode.Packed)
+        {
+            lines.Add("Tracks only load from loose folders, so the game has to be unpacked first. "
+                      + "This is a big, slow, one-off operation — see the disk figure above.");
+            if (!archive.HasEnoughSpace)
+                lines.Add("There is not enough free space on this drive to unpack.");
+        }
+
+        if (archive.Mode == ArchiveMode.Unpacked)
+        {
+            lines.Add("While unpacked: do NOT use Steam's \"Verify integrity of game files\" — it "
+                      + "re-downloads the whole archive. A game update also puts the game back to "
+                      + "packed; re-running this tool fixes that.");
+        }
+
+        if (archive.DisabledPackages.Count > 1)
+        {
+            lines.Add($"{archive.DisabledPackages.Count} renamed-aside archives are present, so "
+                      + "\"Revert to packed\" cannot tell which belongs to this game version. Rename "
+                      + "the right one to content.kspkg by hand.");
+        }
+
+        return string.Join("\n\n", lines);
+    }
+
+    private void SetEnabled(bool unpack, bool revert, bool install, bool uninstall, bool verify)
+    {
+        _unpack.Enabled = unpack;
+        _revert.Enabled = revert;
+        _install.Enabled = install;
+        _uninstall.Enabled = uninstall;
+        _verify.Enabled = verify;
+    }
+
+    private void Browse()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Select the Assetto Corsa EVO folder",
+            UseDescriptionForTitle = true,
+            SelectedPath = Directory.Exists(GameRoot) ? GameRoot : "",
+        };
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+            _gamePath.Text = dialog.SelectedPath;
+    }
+
+    private void ToggleLog()
+    {
+        _log.Visible = _showLog.Checked;
+        Height = Math.Max(Height, _showLog.Checked ? 620 : MinimumSize.Height);
+    }
+
+    // ------------------------------------------------------------------ running work
+
+    private void Log(string line)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => Log(line));
+            return;
+        }
+
+        _log.AppendText(line + Environment.NewLine);
+    }
+
+    /// <summary>Run a Core operation off the UI thread, with the buttons locked and the log live.</summary>
+    private async Task RunAsync(string title, Action<Action<string>> work)
+    {
+        BeginWork(title, indeterminate: true);
+        try
+        {
+            await Task.Run(() => work(Log));
+            _progressText.Text = $"{title} — done.";
+        }
+        catch (Exception e)
+        {
+            Failed(title, e);
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
+    private async Task UnpackAsync()
+    {
+        GameArchiveState archive = GameArchive.Detect(GameRoot);
+        string question = $"""
+            Unpack the game's content archive?
+
+            This writes about {GameArchive.Bytes(archive.RequiredBytes)} to disk and takes a while.
+            The archive itself is kept, renamed to content.kspkg.bak, so this is reversible with
+            "Revert to packed".
+
+            Nothing is renamed until every file is out, so cancelling leaves the game playable.
+            """;
+        if (MessageBox.Show(this, question, "Unpack game", MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning) != DialogResult.OK)
+        {
+            return;
+        }
+
+        BeginWork("Unpacking", indeterminate: false);
+        var progress = new Progress<UnpackProgress>(p =>
+        {
+            _progress.Value = Math.Clamp((int)(p.Fraction * 100), 0, 100);
+            _progressText.Text = $"Unpacking… {p.FilesDone:N0} / {p.FilesTotal:N0} files";
+        });
+
+        try
+        {
+            CancellationToken token = _cancellation!.Token;
+            int files = await Task.Run(() => GameArchive.Unpack(GameRoot, progress, token), token);
+            Log($"Unpacked {files:N0} files.");
+            _progressText.Text = $"Unpacked {files:N0} files. The game now reads loose content.";
+        }
+        catch (OperationCanceledException)
+        {
+            _progressText.Text = "Cancelled. The archive is still in place, so the game still runs.";
+            Log("Unpack cancelled — nothing was renamed, re-run to continue.");
+        }
+        catch (Exception e)
+        {
+            Failed("Unpack", e);
+        }
+        finally
+        {
+            EndWork();
+        }
+    }
+
+    private void Revert()
+    {
+        try
+        {
+            GameArchive.RevertToPacked(GameRoot);
+            Log("Archive restored — the game reads packed content again.");
+            MessageBox.Show(this,
+                "The archive is back in place.\n\nThe unpacked files are still on disk and are "
+                + "harmless, but you can delete the game's content folder to reclaim the space.",
+                "Reverted", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception e)
+        {
+            Failed("Revert", e);
+        }
+        finally
+        {
+            RefreshState();
+        }
+    }
+
+    private void BeginWork(string title, bool indeterminate)
+    {
+        _cancellation = new CancellationTokenSource();
+        _showLog.Checked = true;
+        Log($"--- {title} ---");
+        SetEnabled(false, false, false, false, false);
+        _browse.Enabled = false;
+        _gamePath.Enabled = false;
+        _cancel.Enabled = !indeterminate;
+        _progress.Visible = true;
+        _progress.Style = indeterminate ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+        _progress.Value = 0;
+        _progressText.Text = title + "…";
+    }
+
+    private void EndWork()
+    {
+        _cancellation?.Dispose();
+        _cancellation = null;
+        _cancel.Enabled = false;
+        _progress.Visible = false;
+        _browse.Enabled = true;
+        _gamePath.Enabled = true;
+        RefreshState();
+    }
+
+    private void Failed(string title, Exception e)
+    {
+        Log($"FAILED: {e.Message}");
+        _progressText.Text = $"{title} failed.";
+
+        if (e is UnauthorizedAccessException)
+        {
+            OfferElevation();
+            return;
+        }
+
+        MessageBox.Show(this, e.Message, title + " failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+
+    /// <summary>
+    /// Steam's normal permissions let a user write into their own game folder, but that is not
+    /// universal — a folder under Program Files with tightened ACLs, or a second Windows account,
+    /// will refuse. Offer the elevated relaunch rather than dead-ending on an access error.
+    /// </summary>
+    private void OfferElevation()
+    {
+        DialogResult answer = MessageBox.Show(this,
+            "Windows refused permission to write into the game folder.\n\n"
+            + "Restart this installer as administrator and try again?",
+            "Permission denied", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (answer != DialogResult.Yes)
+            return;
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Environment.ProcessPath!,
+                UseShellExecute = true,
+                Verb = "runas",
+            });
+            Close();
+        }
+        catch (Exception e)
+        {
+            MessageBox.Show(this, "Could not restart as administrator:\n\n" + e.Message,
+                "Restart failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+}

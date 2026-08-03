@@ -10,8 +10,11 @@ only be loaded from an unpacked install.
 
 The full licence text ships alongside the library in `external/ACEvo.Package/LICENSE.txt`.
 
-> Not yet wired up: the unpack step lands with the GUI. Until then the installer only reads and
-> verifies an already-unpacked install.
+Referenced as a git submodule and used through its **public API only** — no fork. Its `ExtractAll`
+has no progress or cancellation hook and its file table is private, so extraction is driven one
+entry at a time from our side instead. Keeping the submodule unmodified means
+`git submodule update` stays a safe way to pick up format fixes, and the pack format *has* changed
+across game versions.
 
 ---
 

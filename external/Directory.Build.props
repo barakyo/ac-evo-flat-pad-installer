@@ -1,0 +1,13 @@
+<!--
+  Stops MSBuild walking up to FlatPadInstaller/Directory.Build.props for anything under external/.
+  Third-party code is built on its own terms — our warnings-as-errors is ours to satisfy, not
+  upstream's, and imposing it would break on the next `git submodule update`. The nullable warnings
+  below are upstream's to fix; silencing them here keeps our own build output readable.
+-->
+<Project>
+
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS8601;CS8604;CS8618</NoWarn>
+  </PropertyGroup>
+
+</Project>
