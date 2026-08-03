@@ -48,7 +48,7 @@ internal sealed class MainForm : Form
     private readonly Button _unpack = new() { Text = "Unpack game", AutoSize = true };
     private readonly Button _revert = new() { Text = "Revert to packed", AutoSize = true };
     private readonly Button _install = new() { Text = "Install Flat Pad", AutoSize = true };
-    private readonly Button _uninstall = new() { Text = "Uninstall", AutoSize = true };
+    private readonly Button _uninstall = new() { Text = "Uninstall Flat Pad", AutoSize = true };
     private readonly Button _verify = new() { Text = "Verify", AutoSize = true };
     private readonly Button _cancel = new() { Text = "Cancel", AutoSize = true, Enabled = false };
 
@@ -68,13 +68,17 @@ internal sealed class MainForm : Form
         Visible = false,
     };
 
+    private readonly ToolTip _tips = new();
+
     private CancellationTokenSource? _cancellation;
 
     public MainForm()
     {
         Text = "Assetto Corsa EVO — Flat Pad Installer";
         Font = SystemFonts.MessageBoxFont ?? Font;
-        MinimumSize = new Size(640, 300);
+        // Wide enough that the action row never wraps — the longest labels are state-dependent
+        // ("Reinstall Flat Pad" / "Uninstall Flat Pad"), so it has to fit the worst case.
+        MinimumSize = new Size(680, 300);
         AutoSizeMode = AutoSizeMode.GrowOnly;
         Size = new Size(680, 380);
         StartPosition = FormStartPosition.CenterScreen;
@@ -222,6 +226,22 @@ internal sealed class MainForm : Form
             : SystemColors.ControlText;
         _diskValue.Text = diskLine;
         _warning.Text = BuildWarning(archive, flatPad);
+
+        // Install stays available in every state — it is also the REPAIR action. A game update
+        // re-packs the game and restores stock content, and re-running install is the documented
+        // fix; so is a half-broken install that still holds its registry entry. Disabling it once
+        // the track is present would remove the remedy exactly when it is needed. Label it for the
+        // state instead, so the button says what it will do.
+        _install.Text = flatPad switch
+        {
+            FlatPadState.Installed => "Reinstall Flat Pad",
+            FlatPadState.FilesPresentButNotRegistered => "Repair Flat Pad",
+            _ => "Install Flat Pad",
+        };
+        _tips.SetToolTip(_install, flatPad == FlatPadState.NotInstalled
+            ? "Derives the track from your game files and registers it."
+            : "Rebuilds the track from scratch and re-registers it. Safe to run at any time — "
+              + "it always starts from the game's own stock files.");
 
         bool present = flatPad != FlatPadState.NotInstalled;
         SetEnabled(
