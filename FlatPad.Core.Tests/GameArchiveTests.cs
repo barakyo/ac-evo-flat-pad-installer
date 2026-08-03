@@ -31,6 +31,29 @@ public class GameArchiveTests : IDisposable
     private void LooseContent() => Directory.CreateDirectory(Path.Combine(_root, "content", "tracks"));
 
     [Fact]
+    public void Loose_content_without_tracks_still_counts_as_unpacked()
+    {
+        // Archive state describes the ARCHIVE. Whether the install is ready for a track mod is a
+        // separate question, asked separately — otherwise a freshly unpacked car-only package
+        // reports "unknown" straight after a successful unpack.
+        Directory.CreateDirectory(Path.Combine(_root, "content", "cars"));
+        Touch("content.kspkg.bak", 10);
+
+        Assert.Equal(ArchiveMode.Unpacked, GameArchive.Detect(_root).Mode);
+    }
+
+    [Fact]
+    public void An_unpacked_install_whose_archive_was_deleted_is_still_unpacked()
+    {
+        LooseContent();
+
+        GameArchiveState state = GameArchive.Detect(_root);
+
+        Assert.Equal(ArchiveMode.Unpacked, state.Mode);
+        Assert.Empty(state.DisabledPackages);   // …but there is nothing to revert to
+    }
+
+    [Fact]
     public void A_live_archive_means_packed_and_tracks_cannot_be_modded()
     {
         Touch("content.kspkg", 73_579_626_496);
@@ -41,6 +64,21 @@ public class GameArchiveTests : IDisposable
         Assert.NotNull(state.LivePackage);
         // Derived from the archive, never hardcoded, so it survives the archive changing size.
         Assert.Equal(73_579_626_496, state.RequiredBytes);
+        // Win32 matches "content.kspkg.*" against "content.kspkg" too. Listing the live archive as
+        // renamed-aside would spuriously trip the ambiguity guard below.
+        Assert.Empty(state.DisabledPackages);
+    }
+
+    [Fact]
+    public void A_packed_install_that_also_has_a_backup_is_not_ambiguous()
+    {
+        Touch("content.kspkg", 100);
+        Touch("content.kspkg.bak", 90);
+
+        GameArchiveState state = GameArchive.Detect(_root);
+
+        Assert.Equal(ArchiveMode.Packed, state.Mode);
+        Assert.Equal(["content.kspkg.bak"], state.DisabledPackages.Select(Path.GetFileName));
     }
 
     [Fact]

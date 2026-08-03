@@ -86,16 +86,25 @@ public static partial class GameArchive
         string live = Path.Combine(gameRoot, PackageName);
         bool hasLive = File.Exists(live);
 
+        // ⚠️ Win32 wildcard matching treats a trailing ".*" as "…or no extension at all", so the
+        // pattern below also matches content.kspkg itself. Without the filter the LIVE archive is
+        // reported as renamed-aside, which spuriously trips the "which one belongs to this build?"
+        // guard on any packed install that also has a .bak.
         List<string> disabled = Directory.Exists(gameRoot)
             ? Directory.EnumerateFiles(gameRoot, PackageName + ".*")
+                .Where(f => !string.Equals(Path.GetFileName(f), PackageName, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(f => new FileInfo(f).LastWriteTimeUtc)
                 .ToList()
             : [];
 
-        bool loose = Directory.Exists(Path.Combine(gameRoot, "content", "tracks"));
+        // Keyed on content/ rather than content/tracks: this describes the ARCHIVE, not whether the
+        // install happens to be ready for a track mod. Requiring a renamed-aside archive here would
+        // also mis-report an install whose archive was deleted outright as "unknown" when it is
+        // plainly unpacked — reverting needs one, describing the state does not.
+        bool loose = Directory.Exists(Path.Combine(gameRoot, "content"));
 
         ArchiveMode mode = hasLive ? ArchiveMode.Packed
-            : loose && disabled.Count > 0 ? ArchiveMode.Unpacked
+            : loose ? ArchiveMode.Unpacked
             : ArchiveMode.Unknown;
 
         string? sizeSource = hasLive ? live : disabled.FirstOrDefault();

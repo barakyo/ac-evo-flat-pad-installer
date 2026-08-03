@@ -6,8 +6,8 @@ A one-click installer for **Flat Pad** — a 1.5 km dead-flat, wall-free, scener
 
 > **Status: feature-complete, not yet released.** A Python script is still the reference
 > implementation; this C# port produces a **byte-identical** track to it — all 1530 files — and adds
-> game detection, archive unpacking and a GUI. What has *not* been exercised end-to-end here is a
-> full unpack of a packed install (see [Verification](#verification)).
+> game detection, archive unpacking and a GUI. See [Verification](#verification) for what has and
+> has not been exercised.
 
 ## How it works, and why it isn't just a zip
 
@@ -94,8 +94,9 @@ diff py.txt cs.txt
 | Track build | **Byte-identical** to the Python across all 1530 files, from a warm install and a cold start. Uninstall matches too. |
 | Verify | Console output byte-identical, on a passing install *and* on a deliberately broken one. |
 | Archive reading | 201 files sampled from a real 68.5 GB archive extract byte-identical to disk, across a 114,685-entry table. |
-| **Full unpack** | **Not run end-to-end.** The test machine's game was already unpacked, and a real run writes ~70 GB. The extraction loop is covered by the sampling above; the final rename and the free-space guard are not. |
-| Unit tests | 67, covering the format layer, the closure crawl, the geometry edits and the archive state machine. |
+| Unpack round trip | Run end-to-end against a real 599 MB `.kspkg`: detect → free-space check → extract all 650 files → rename aside → detect unpacked → revert → detect packed. Output is **byte-identical to Nenkai's own CLI**. |
+| **Unpack at full scale** | **Not run.** A real content archive is ~70 GB / 114,685 files; the largest run here was 599 MB / 650 files. Nothing in the code is size-dependent, but the duration and disk pressure of the real thing are untested. |
+| Unit tests | 70, covering the format layer, the closure crawl, the geometry edits and the archive state machine. |
 
 ## Layout
 
