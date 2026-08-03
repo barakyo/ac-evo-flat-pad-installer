@@ -191,7 +191,8 @@ internal sealed class MainForm : Form
         _statusGrid.Visible = true;
 
         GameArchiveState archive = GameArchive.Detect(GameRoot);
-        bool installed = Directory.Exists(Path.Combine(GameRoot, "content", "tracks", "flatpad"));
+        FlatPadState flatPad = Verifier.DetectState(GameRoot);
+        bool installed = flatPad == FlatPadState.Installed;
 
         string archiveLine = archive.Mode switch
         {
@@ -209,21 +210,39 @@ internal sealed class MainForm : Form
         }
 
         _archiveValue.Text = archiveLine;
-        _installedValue.Text = installed ? "installed" : "not installed";
+        _installedValue.Text = flatPad switch
+        {
+            FlatPadState.Installed => "installed",
+            FlatPadState.FilesPresentButNotRegistered =>
+                "files present, but NOT registered — it will not appear in any track list",
+            _ => "not installed",
+        };
+        _installedValue.ForeColor = flatPad == FlatPadState.FilesPresentButNotRegistered
+            ? Color.FromArgb(150, 90, 0)
+            : SystemColors.ControlText;
         _diskValue.Text = diskLine;
-        _warning.Text = BuildWarning(archive);
+        _warning.Text = BuildWarning(archive, flatPad);
 
+        bool present = flatPad != FlatPadState.NotInstalled;
         SetEnabled(
             unpack: archive.Mode == ArchiveMode.Packed,
             revert: archive.Mode == ArchiveMode.Unpacked && archive.DisabledPackages.Count == 1,
             install: archive.Mode == ArchiveMode.Unpacked,
-            uninstall: archive.Mode == ArchiveMode.Unpacked && installed,
-            verify: archive.Mode == ArchiveMode.Unpacked && installed);
+            uninstall: archive.Mode == ArchiveMode.Unpacked && present,
+            verify: archive.Mode == ArchiveMode.Unpacked && present);
     }
 
-    private static string BuildWarning(GameArchiveState archive)
+    private static string BuildWarning(GameArchiveState archive, FlatPadState flatPad)
     {
         var lines = new List<string>();
+        if (flatPad == FlatPadState.FilesPresentButNotRegistered && archive.Mode == ArchiveMode.Unpacked)
+        {
+            // Unpacking restores the stock registries over the registered ones. Nothing reports it,
+            // and the track simply stops appearing.
+            lines.Add("Flat Pad's files are on disk but its registry entries are gone — unpacking the "
+                      + "game replaces those. Press \"Install Flat Pad\" to put them back.");
+        }
+
         if (archive.Mode == ArchiveMode.Packed)
         {
             lines.Add("Tracks only load from loose folders, so the game has to be unpacked first. "

@@ -18,8 +18,52 @@ namespace FlatPad.Core.FlatPad;
 ///
 /// Port of <c>verify()</c> in <c>tracks/install_flatpad.py</c>.
 /// </remarks>
+/// <summary>What a quick look at the install says about Flat Pad.</summary>
+public enum FlatPadState
+{
+    NotInstalled,
+
+    /// <summary>
+    /// The track's files are there but it is not in the registries, so it will not appear in any
+    /// menu. Unpacking the game does exactly this: the archive's stock <c>system\*.table</c> files
+    /// overwrite the registered ones, and nothing says so.
+    /// </summary>
+    FilesPresentButNotRegistered,
+
+    Installed,
+}
+
 public sealed class Verifier(string gameRoot)
 {
+    /// <summary>
+    /// A cheap status check for the UI — is Flat Pad actually going to show up?
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not just "does the folder exist". After an unpack the folder survives while the
+    /// registration does not, and reporting that as "installed" sends someone to a track list that
+    /// does not contain it.
+    /// </remarks>
+    public static FlatPadState DetectState(string gameRoot)
+    {
+        if (!Directory.Exists(RefPath.RealPath(gameRoot, DstDir)))
+            return FlatPadState.NotInstalled;
+
+        try
+        {
+            List<PbNode> tree = PbTree.ParseTree(
+                File.ReadAllBytes(RefPath.RealPath(gameRoot, TracksTable)));
+            (_, List<PbNode> entries) = TableEditor.TableEntries(tree);
+            return entries.Any(e => TableEditor.TextAt(e, 2, 1) == DstDisplay)
+                ? FlatPadState.Installed
+                : FlatPadState.FilesPresentButNotRegistered;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                      or ProtobufException or InvalidDataException)
+        {
+            return FlatPadState.FilesPresentButNotRegistered;
+        }
+    }
+
     private string Rp(string reference) => RefPath.RealPath(gameRoot, reference);
 
     private byte[] Read(string reference) => File.ReadAllBytes(Rp(reference));

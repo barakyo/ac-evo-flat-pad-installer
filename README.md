@@ -95,8 +95,8 @@ diff py.txt cs.txt
 | Verify | Console output byte-identical, on a passing install *and* on a deliberately broken one. |
 | Archive reading | 201 files sampled from a real 68.5 GB archive extract byte-identical to disk, across a 114,685-entry table. |
 | Unpack round trip | Run end-to-end against a real 599 MB `.kspkg`: detect → free-space check → extract all 650 files → rename aside → detect unpacked → revert → detect packed. Output is **byte-identical to Nenkai's own CLI**. |
-| **Unpack at full scale** | **Not run.** A real content archive is ~70 GB / 114,685 files; the largest run here was 599 MB / 650 files. Nothing in the code is size-dependent, but the duration and disk pressure of the real thing are untested. |
-| Unit tests | 70, covering the format layer, the closure crawl, the geometry edits and the archive state machine. |
+| Unpack at full scale | Run once for real through the GUI: **119,443 files / 68.5 GB**, then reinstall and verify. The whole round trip left all 1530 installed files **byte-identical** to the pre-run baseline. |
+| Unit tests | 78, covering the format layer, the closure crawl, the geometry edits, the archive state machine and progress throttling. |
 
 ## Layout
 

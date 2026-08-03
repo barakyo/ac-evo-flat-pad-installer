@@ -178,8 +178,13 @@ static int Status(string gameRoot)
                             + (state.HasEnoughSpace ? "" : "  ⚠ NOT ENOUGH")
                           : ""));
 
-    bool installed = Directory.Exists(Path.Combine(gameRoot, "content", "tracks", "flatpad"));
-    Console.WriteLine($"Flat Pad {(installed ? "installed" : "not installed")}");
+    Console.WriteLine($"Flat Pad {Verifier.DetectState(gameRoot) switch
+    {
+        FlatPadState.Installed => "installed",
+        FlatPadState.FilesPresentButNotRegistered =>
+            "files present, but NOT registered — run 'install' (unpacking replaces the registries)",
+        _ => "not installed",
+    }}");
     return 0;
 }
 
@@ -192,16 +197,12 @@ static void RequireUnpackedContent(string gameRoot)
     }
 }
 
-static IProgress<UnpackProgress> Bar(string label)
+// Synchronous, not Progress<T>: on the console there is no UI thread to marshal to, and queueing
+// the callbacks just lets the bar fall behind the work. Core already rate-limits the reports.
+static IProgress<UnpackProgress> Bar(string label) => new InlineProgress(p =>
+    Console.Write($"\r{label}… {p.Fraction * 100,5:F1}%  {p.FilesDone:N0}/{p.FilesTotal:N0} files   "));
+
+internal sealed class InlineProgress(Action<UnpackProgress> write) : IProgress<UnpackProgress>
 {
-    var last = TimeSpan.Zero;
-    var clock = System.Diagnostics.Stopwatch.StartNew();
-    return new Progress<UnpackProgress>(p =>
-    {
-        // Redrawing per file would spend more time on the console than on the extraction.
-        if (clock.Elapsed - last < TimeSpan.FromMilliseconds(200) && p.FilesDone != p.FilesTotal)
-            return;
-        last = clock.Elapsed;
-        Console.Write($"\r{label}… {p.Fraction * 100,5:F1}%  {p.FilesDone:N0}/{p.FilesTotal:N0} files   ");
-    });
+    public void Report(UnpackProgress value) => write(value);
 }

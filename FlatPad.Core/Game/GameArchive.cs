@@ -78,6 +78,9 @@ public static partial class GameArchive
     /// <summary>The suffix this tool renames an archive to. Deterministic, so revert is unambiguous.</summary>
     public const string DisabledSuffix = ".bak";
 
+    /// <summary>Fast enough to look live, slow enough that the consumer keeps up.</summary>
+    private static readonly TimeSpan ReportInterval = TimeSpan.FromMilliseconds(100);
+
     [GeneratedRegex(@"^(?<path>.*) - offset:(?<offset>[0-9A-Fa-f]+), size:(?<size>[0-9A-Fa-f]+)")]
     private static partial Regex ListingLine { get; }
 
@@ -190,6 +193,11 @@ public static partial class GameArchive
         int done = 0;
         var failed = new List<string>();
 
+        // ⚠️ Throttled: a real archive is >119,000 files, and reporting each one posts a callback to
+        // the UI thread faster than it can drain them. That makes the window stop responding, which
+        // takes Cancel with it.
+        var report = new ThrottledProgress<UnpackProgress>(progress, ReportInterval);
+
         using (PackFile pack = PackFile.Open(state.LivePackage))
         {
             foreach (ArchiveEntry entry in entries)
@@ -199,7 +207,11 @@ public static partial class GameArchive
                     failed.Add(entry.Path);
                 done++;
                 doneBytes += entry.Size;
-                progress?.Report(new UnpackProgress(done, entries.Count, doneBytes, totalBytes, entry.Path));
+                var snapshot = new UnpackProgress(done, entries.Count, doneBytes, totalBytes, entry.Path);
+                if (done == entries.Count)
+                    report.ReportFinal(snapshot);
+                else
+                    report.Report(snapshot);
             }
         }
 
