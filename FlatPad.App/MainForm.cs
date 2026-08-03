@@ -246,7 +246,9 @@ internal sealed class MainForm : Form
         bool present = flatPad != FlatPadState.NotInstalled;
         SetEnabled(
             unpack: archive.Mode == ArchiveMode.Packed,
-            revert: archive.Mode == ArchiveMode.Unpacked && archive.DisabledPackages.Count == 1,
+            // Enabled whenever there is anything to restore. With several archives it asks which,
+            // rather than going dark and leaving the user to work out why.
+            revert: archive.Mode == ArchiveMode.Unpacked && archive.DisabledPackages.Count > 0,
             install: archive.Mode == ArchiveMode.Unpacked,
             uninstall: archive.Mode == ArchiveMode.Unpacked && present,
             verify: archive.Mode == ArchiveMode.Unpacked && present);
@@ -280,9 +282,8 @@ internal sealed class MainForm : Form
 
         if (archive.DisabledPackages.Count > 1)
         {
-            lines.Add($"{archive.DisabledPackages.Count} renamed-aside archives are present, so "
-                      + "\"Revert to packed\" cannot tell which belongs to this game version. Rename "
-                      + "the right one to content.kspkg by hand.");
+            lines.Add($"{archive.DisabledPackages.Count} renamed-aside archives are present — a game "
+                      + "update downloads a fresh one. \"Revert to packed\" will ask which to restore.");
         }
 
         return string.Join("\n\n", lines);
@@ -396,9 +397,19 @@ internal sealed class MainForm : Form
 
     private void Revert()
     {
+        GameArchiveState archive = GameArchive.Detect(GameRoot);
+        string? chosen = archive.DisabledPackages.Count == 1 ? archive.DisabledPackages[0] : null;
+        if (chosen is null)
+        {
+            using var picker = new ArchivePicker(archive.DisabledPackages);
+            if (picker.ShowDialog(this) != DialogResult.OK || picker.Chosen is null)
+                return;
+            chosen = picker.Chosen;
+        }
+
         try
         {
-            GameArchive.RevertToPacked(GameRoot);
+            GameArchive.RevertToPacked(GameRoot, chosen);
             Log("Archive restored — the game reads packed content again.");
             MessageBox.Show(this,
                 "The archive is back in place.\n\nThe unpacked files are still on disk and are "

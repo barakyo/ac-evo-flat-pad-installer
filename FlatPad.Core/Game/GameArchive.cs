@@ -237,6 +237,28 @@ public static partial class GameArchive
     /// The unpacked files are left where they are: deleting tens of gigabytes is not something to do
     /// as a side effect of a rename. They are inert while the archive is live.
     /// </remarks>
+    /// <summary>
+    /// Restore a SPECIFIC archive, chosen by the caller.
+    /// </summary>
+    /// <remarks>
+    /// The parameterless overload refuses to guess between several archives, which is right — but a
+    /// caller that has actually asked the user which one they want is not guessing. Kept separate so
+    /// the safe default stays the default.
+    /// </remarks>
+    public static void RevertToPacked(string gameRoot, string archivePath)
+    {
+        GameArchiveState state = Detect(gameRoot);
+        if (state.LivePackage is not null)
+            throw new GameArchiveException($"{PackageName} is already in place — the game reads packed content");
+        if (!state.DisabledPackages.Any(p => string.Equals(p, archivePath, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new GameArchiveException(
+                $"'{Path.GetFileName(archivePath)}' is not a renamed-aside archive in {gameRoot}");
+        }
+
+        File.Move(archivePath, Path.Combine(gameRoot, PackageName));
+    }
+
     public static void RevertToPacked(string gameRoot)
     {
         GameArchiveState state = Detect(gameRoot);

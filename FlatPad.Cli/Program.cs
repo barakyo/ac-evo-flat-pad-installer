@@ -12,7 +12,7 @@ const string Usage = """
       uninstall                  remove it and restore stock content
       verify                     check an existing install (read-only)
       unpack                     unpack the game archive so loose tracks load
-      revert                     put the archive back
+      revert [--archive F]       put the archive back (--archive picks one if several exist)
       check-unpack [--archive F] sample the loose files against the archive they came from
 
     --game <path>   the Assetto Corsa EVO folder. Auto-detected from Steam if omitted.
@@ -97,7 +97,10 @@ try
         }
 
         case "revert":
-            GameArchive.RevertToPacked(gameRoot);
+            if (archive is not null)
+                GameArchive.RevertToPacked(gameRoot, archive);
+            else
+                GameArchive.RevertToPacked(gameRoot);
             Console.WriteLine("Archive restored. The game reads packed content again.");
             Console.WriteLine("The unpacked files are still on disk; delete content/ by hand to reclaim the space.");
             return 0;

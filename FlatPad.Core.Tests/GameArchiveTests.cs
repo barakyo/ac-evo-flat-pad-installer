@@ -141,6 +141,35 @@ public class GameArchiveTests : IDisposable
     }
 
     [Fact]
+    public void Revert_restores_the_archive_the_caller_picked()
+    {
+        // Refusing to GUESS is right; a caller that asked the user is not guessing.
+        Touch("content.kspkg.bak", 10, new DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc));
+        string july = Touch("content.kspkg.jul22update-disabled", 20,
+            new DateTime(2026, 7, 22, 0, 0, 0, DateTimeKind.Utc));
+        LooseContent();
+
+        GameArchive.RevertToPacked(_root, july);
+
+        Assert.Equal(ArchiveMode.Packed, GameArchive.Detect(_root).Mode);
+        Assert.Equal(20, new FileInfo(Path.Combine(_root, "content.kspkg")).Length);
+        Assert.True(File.Exists(Path.Combine(_root, "content.kspkg.bak")));   // the other is untouched
+    }
+
+    [Fact]
+    public void Revert_rejects_a_file_that_is_not_one_of_this_installs_archives()
+    {
+        Touch("content.kspkg.bak", 10);
+        string stranger = Touch("some_other_file.kspkg", 10);
+        LooseContent();
+
+        var ex = Assert.Throws<GameArchiveException>(() => GameArchive.RevertToPacked(_root, stranger));
+
+        Assert.Contains("not a renamed-aside archive", ex.Message);
+        Assert.False(File.Exists(Path.Combine(_root, "content.kspkg")));
+    }
+
+    [Fact]
     public void Revert_is_a_no_op_error_when_the_archive_is_already_live()
     {
         Touch("content.kspkg", 42);
