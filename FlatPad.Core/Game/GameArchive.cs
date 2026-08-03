@@ -223,8 +223,25 @@ public static partial class GameArchive
                 + $"starting with '{failed[0]}'. The archive has been left in place.");
         }
 
-        File.Move(state.LivePackage, state.LivePackage + DisabledSuffix);
+        File.Move(state.LivePackage, FreeDisabledName(state.LivePackage));
         return done;
+    }
+
+    /// <summary>
+    /// A renamed-aside name that is not already taken.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ <c>File.Move</c> will not overwrite, and an install can already hold a
+    /// <c>content.kspkg.bak</c> from a previous game version. Without this the rename throws AFTER a
+    /// full extraction has succeeded, leaving the user with every file on disk, an error dialog, and
+    /// an install that still reports itself as packed.
+    /// </remarks>
+    public static string FreeDisabledName(string livePackage)
+    {
+        string candidate = livePackage + DisabledSuffix;
+        for (int n = 2; File.Exists(candidate); n++)
+            candidate = $"{livePackage}{DisabledSuffix}{n}";
+        return candidate;
     }
 
     /// <summary>Put the archive back, so the game reads packed content again.</summary>
@@ -347,6 +364,30 @@ public static partial class GameArchive
         }
 
         return new UnpackCheck(sample.Count, files.Count, missing, different);
+    }
+
+    /// <summary>
+    /// Does this archive hold the content that is currently unpacked on disk?
+    /// </summary>
+    /// <remarks>
+    /// The question that actually matters when choosing between archives, and the one neither the
+    /// filename nor the date answers. An install can hold archives from different game versions —
+    /// restoring and re-unpacking the wrong one swaps the whole content set (a July archive here
+    /// carried an entire track the June one did not). A small sample is plenty: mismatched archives
+    /// diverge almost immediately.
+    /// </remarks>
+    public static bool MatchesLooseContent(string gameRoot, string archivePath, int sampleSize = 15,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return CheckUnpack(gameRoot, archivePath, sampleSize, null, cancellationToken).Ok;
+        }
+        catch (Exception e) when (e is GameArchiveException or IOException or UnauthorizedAccessException
+                                      or InvalidDataException)
+        {
+            return false;
+        }
     }
 
     public static string Bytes(long value) => value switch

@@ -401,7 +401,7 @@ internal sealed class MainForm : Form
         string? chosen = archive.DisabledPackages.Count == 1 ? archive.DisabledPackages[0] : null;
         if (chosen is null)
         {
-            using var picker = new ArchivePicker(archive.DisabledPackages);
+            using var picker = new ArchivePicker(GameRoot, archive.DisabledPackages);
             if (picker.ShowDialog(this) != DialogResult.OK || picker.Chosen is null)
                 return;
             chosen = picker.Chosen;

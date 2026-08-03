@@ -28,13 +28,19 @@ public static class FlatPadSpec
     public const string LayoutCode = "GP";
 
     /// <summary>
-    /// <c>track_containers.table</c> id. <c>.8</c> is per-(track, layout) — all of Sebring's session
-    /// entries share 5954; the table's max is 25947.
+    /// Lowest id we will take in <c>track_containers.table</c> <c>[8.8]</c>.
     /// </summary>
-    public const ulong NewTrackId = 26001;
-
-    /// <summary>A global 1..36 index over (track, layout) pairs. Sebring holds 36, so we take 37.</summary>
-    public const ulong NewTrackIndex = 37;
+    /// <remarks>
+    /// <c>.8</c> is per-(track, layout) — all of Sebring's session entries share one. The base
+    /// game's ids topped out at 25947, so starting above 26000 keeps ours clear of that block. The
+    /// actual id is still allocated above whatever the live table holds; this is only a floor, so
+    /// an update growing into our range cannot collide.
+    ///
+    /// ⚠️ Nothing here may be a fixed number. <c>[8.21]</c> is a DENSE global index over
+    /// (track, layout) pairs, and a hardcoded 37 — correct when Sebring held the maximum of 36 —
+    /// silently displaced Kyalami in the menus the moment v0.8.1 added it at 37.
+    /// </remarks>
+    public const ulong NewTrackIdFloor = 26001;
 
     /// <summary>
     /// Session entries to register, by their donor name in <c>track_containers.table</c>.

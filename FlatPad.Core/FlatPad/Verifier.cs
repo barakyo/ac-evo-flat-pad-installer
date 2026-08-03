@@ -152,18 +152,67 @@ public sealed class Verifier(string gameRoot)
             .Where(r => !File.Exists(Rp(r)) && !Directory.Exists(Rp(r)))
             .Order(StringComparer.Ordinal).ToList();
 
+        // A shared ref is copied VERBATIM from the donor, so an unresolved one is the base game's
+        // dangling reference, not ours — v0.8.1 left sebring.track pointing at an ImolaWet preset it
+        // had removed. Flat Pad is then exactly as broken as the donor, which is to say it loads.
+        // Only a dangling ref the donor does NOT have could be something we introduced.
+        List<string> inherited = unresolved.Where(DonorAlsoReferences).ToList();
+        List<string> introduced = unresolved.Except(inherited, StringComparer.Ordinal).ToList();
+
         report.Line($"  {DstDir}: {res.Owned.Count} own refs checked, {res.External.Count} shared refs checked");
-        report.Line($"    missing own refs: {res.Missing.Count} | unresolved shared refs: {unresolved.Count} | "
-                    + $"refs leaking back into {Src}: {leaks.Count}");
+        report.Line($"    missing own refs: {res.Missing.Count} | unresolved shared refs: {unresolved.Count} "
+                    + $"({inherited.Count} inherited from {Src}) | refs leaking back into {Src}: {leaks.Count}");
 
         if (res.Owned.Count < 100)
             report.Problem($"only {res.Owned.Count} own refs found — the track looks incomplete");
         foreach (string r in res.Missing)
             report.Problem($"missing: {r}");
-        foreach (string r in unresolved)
+        foreach (string r in inherited)
+            report.Line($"    inherited dangling ref (the donor has it too, so not ours): {r}");
+        foreach (string r in introduced)
             report.Problem($"unresolved shared ref: {r}");
         foreach (string r in leaks.Take(10))
             report.Problem($"leaks back into {Src}: {r}");
+    }
+
+    /// <summary>
+    /// Does the donor carry this same reference? If so, we merely copied it.
+    /// </summary>
+    /// <remarks>
+    /// Scans the donor tree for the ref. Only runs when something is already unresolved, which is
+    /// rare, so the cost never lands on a healthy install.
+    /// </remarks>
+    private bool DonorAlsoReferences(string reference)
+    {
+        string donorRoot = Rp(SrcDir);
+        if (!Directory.Exists(donorRoot))
+            return false;
+
+        string wanted = RefPath.Canon(reference);
+        foreach (string path in Directory.EnumerateFiles(donorRoot, "*", SearchOption.AllDirectories))
+        {
+            if (!Closure.IsScannable(path))
+                continue;
+            byte[] data;
+            try
+            {
+                if (new FileInfo(path).Length > 8_000_000)
+                    continue;
+                data = File.ReadAllBytes(path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            foreach (string r in ReferenceScanner.ExtractReferences(data))
+            {
+                if (string.Equals(RefPath.Canon(r), wanted, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The pad's world-space AABB, from the mesh's file-level <c>[6]</c>/<c>[7]</c> corners.</summary>
@@ -332,16 +381,39 @@ public sealed class Verifier(string gameRoot)
             .Select(e => TableEditor.Child(e, 8, 8)!.Varint)
             .Where(ids.Contains).ToHashSet();
 
+        // ⚠️ [8.21] is a DENSE global index over (track, layout) pairs, and sharing one silently
+        // hides the other track from the menus — no error, it is simply not in the list. A
+        // hardcoded 37 displaced Kyalami the moment a game update added it at 37, and this check
+        // is what would have caught it.
+        var ourIndices = ours.Select(e => TableEditor.Child(e, 8, 21)).OfType<PbNode>()
+            .Select(n => n.Varint).ToHashSet();
+        var indexClashes = entries
+            .Where(e => TableEditor.TextAt(e, 8, 10) != DstDisplay)
+            .Select(e => (Track: TableEditor.TextAt(e, 8, 10), Index: TableEditor.Child(e, 8, 21)))
+            .Where(x => x.Index is not null && ourIndices.Contains(x.Index.Varint))
+            .Select(x => x.Track)
+            .Where(t => t is not null)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
         report.Line($"  tracks.table: {nCat} '{DstDisplay}' catalog entr(y/ies) (want 1)");
         report.Line($"  track_containers.table: {ours.Count} session entr(y/ies) "
                     + $"{PyFormat.Repr(ours.Select(e => TableEditor.TextAt(e, 8, 1)))} (want {Sessions.Length}), "
-                    + $"ids {PyFormat.Repr(ids.Order())}");
+                    + $"ids {PyFormat.Repr(ids.Order())}, indices {PyFormat.Repr(ourIndices.Order())}");
+        report.Line($"    id clashes: {clashes.Count} | index clashes: {indexClashes.Count} "
+                    + $"{PyFormat.Repr(indexClashes)}");
         if (nCat != 1)
             report.Problem($"tracks.table has {nCat} '{DstDisplay}' entries, expected 1");
         if (ours.Count != Sessions.Length)
             report.Problem($"track_containers.table has {ours.Count} entries, expected {Sessions.Length}");
         if (clashes.Count > 0)
             report.Problem($"track id clash with a base track: {PyFormat.Repr(clashes.Order())}");
+        foreach (string? track in indexClashes)
+        {
+            report.Problem($"registry index clash with '{track}' — [8.21] is a dense global index, so "
+                           + "sharing one hides that track from the menus entirely, with no error");
+        }
 
         CheckSessionKinds(report, entries, ours);
     }

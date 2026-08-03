@@ -103,24 +103,68 @@ public sealed class Installer(string gameRoot, Action<string> log)
     }
 
     /// <summary>
-    /// Parse a registry from its <c>.orig</c> snapshot, creating the snapshot on first run.
-    /// Always rebuilding from stock is what makes registration idempotent.
+    /// Load a registry from the LIVE file and strip our own entries out of it.
     /// </summary>
-    private List<PbNode> LoadTable(string reference)
+    /// <remarks>
+    /// ⚠️ This used to rebuild from a <c>.orig</c> snapshot taken on first run. That is idempotent
+    /// but it goes STALE: after a game update the snapshot still holds the previous version's
+    /// registry, and writing it back silently reverts whatever the update added. It really happened
+    /// — a v0.8.1 install lost Kyalami's registration entirely, with nothing logged and no error.
+    ///
+    /// Removing our own entries from the live table gets the same idempotency without ever
+    /// discarding someone else's work.
+    /// </remarks>
+    private (List<PbNode> Tree, int Removed) LoadTableWithoutOurEntries(
+        string reference, Func<PbNode, bool> isOurs)
     {
-        string live = Rp(reference);
-        string snap = live + ".orig";
-        if (!File.Exists(snap))
-            File.Copy(live, snap);
-        return PbTree.ParseTree(File.ReadAllBytes(snap));
+        List<PbNode> tree = PbTree.ParseTree(File.ReadAllBytes(Rp(reference)));
+        int removed = TableEditor.RemoveTableEntries(tree, isOurs);
+        return (tree, removed);
     }
 
-    private void Register()
+    private static bool IsOurCatalogEntry(PbNode e) => TableEditor.TextAt(e, 2, 1) == DstDisplay;
+
+    private static bool IsOurSessionEntry(PbNode e) => TableEditor.TextAt(e, 8, 10) == DstDisplay;
+
+    /// <summary>
+    /// Pick registry numbers that are free in THIS install's table.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ These were hardcoded (id 26001, index 37) from the table as it stood in one game version.
+    /// <c>[8.21]</c> is a dense global index over (track, layout) pairs, so the next game update to
+    /// add a track takes the next number — and v0.8.1 did exactly that, putting Kyalami on 37 and
+    /// making Flat Pad displace it in the menus. Allocate above whatever is actually there.
+    /// </remarks>
+    private static (ulong Id, ulong Index) AllocateRegistryNumbers(List<PbNode> entries)
+    {
+        ulong maxId = 0;
+        ulong maxIndex = 0;
+        foreach (PbNode e in entries)
+        {
+            if (TableEditor.Child(e, 8, 8) is { } id)
+                maxId = Math.Max(maxId, id.Varint);
+            if (TableEditor.Child(e, 8, 21) is { } index)
+                maxIndex = Math.Max(maxIndex, index.Varint);
+        }
+
+        // Leave the ids well clear of the base game's block so an update growing into ours is
+        // obvious rather than silent; the index has to be exactly the next one, it is dense.
+        return (Math.Max(maxId + 1, NewTrackIdFloor), maxIndex + 1);
+    }
+
+    /// <summary>
+    /// Put Flat Pad into the two registries, replacing any entries of ours already there.
+    /// </summary>
+    /// <remarks>
+    /// Public because re-registering is useful on its own: unpacking the game restores the stock
+    /// registries over ours, and that needs fixing without rebuilding 1523 files.
+    /// </remarks>
+    public void Register()
     {
         List<(string Old, string New)> repl = EntryReplacements();
 
         // --- tracks.table: the catalog entry
-        List<PbNode> tree = LoadTable(TracksTable);
+        (List<PbNode> tree, int removed) = LoadTableWithoutOurEntries(TracksTable, IsOurCatalogEntry);
         (_, List<PbNode> entries) = TableEditor.TableEntries(tree);
         PbNode? template = entries.FirstOrDefault(e => TableEditor.TextAt(e, 2, 1) == SrcDisplay);
         if (template is null)
@@ -131,10 +175,11 @@ public sealed class Installer(string gameRoot, Action<string> log)
 
         TableEditor.AppendTableEntry(tree, template, repl);
         File.WriteAllBytes(Rp(TracksTable), PbTree.EncodeTree(tree));
-        log($"  tracks.table: registered '{DstDisplay}'");
+        log($"  tracks.table: registered '{DstDisplay}'"
+            + (removed > 0 ? $" (replaced {removed} previous entr{(removed == 1 ? "y" : "ies")})" : ""));
 
         // --- track_containers.table: one entry per session (this is what the menu enumerates)
-        tree = LoadTable(ContainersTable);
+        (tree, removed) = LoadTableWithoutOurEntries(ContainersTable, IsOurSessionEntry);
         (_, entries) = TableEditor.TableEntries(tree);
         var donor = new Dictionary<string, PbNode>(StringComparer.Ordinal);
         foreach (PbNode e in entries)
@@ -154,15 +199,36 @@ public sealed class Installer(string gameRoot, Action<string> log)
                 $"{SrcDisplay} has no session entries named {PyFormat.Repr(missing)} in {ContainersTable}");
         }
 
+        (ulong id, ulong index) = AllocateRegistryNumbers(entries);
         foreach (string session in Sessions)
-        {
-            TableEditor.AppendTableEntry(tree, donor[session], repl,
-                [([8, 8], NewTrackId), ([8, 21], NewTrackIndex)]);
-        }
+            TableEditor.AppendTableEntry(tree, donor[session], repl, [([8, 8], id), ([8, 21], index)]);
 
         File.WriteAllBytes(Rp(ContainersTable), PbTree.EncodeTree(tree));
         log($"  track_containers.table: registered {PyFormat.Repr(Sessions)} "
-            + $"(id {NewTrackId}, index {NewTrackIndex})");
+            + $"(id {id}, index {index})"
+            + (removed > 0 ? $", replaced {removed} previous" : ""));
+
+        DeleteLegacySnapshots();
+    }
+
+    /// <summary>
+    /// Remove <c>.orig</c> snapshots an earlier version of this tool left behind.
+    /// </summary>
+    /// <remarks>
+    /// They are no longer written, and leaving them is actively dangerous: an older build finding
+    /// one would rebuild the registry from a stale copy of it.
+    /// </remarks>
+    private void DeleteLegacySnapshots()
+    {
+        foreach (string reference in (string[])[TracksTable, ContainersTable])
+        {
+            string snap = Rp(reference) + ".orig";
+            if (File.Exists(snap))
+            {
+                File.Delete(snap);
+                log($"  removed stale snapshot {Path.GetFileName(snap)}");
+            }
+        }
     }
 
     private int CopyUiTiles()
@@ -260,16 +326,22 @@ public sealed class Installer(string gameRoot, Action<string> log)
             log($"  removed {DstDir}");
         }
 
-        foreach (string reference in (string[])[TracksTable, ContainersTable])
+        // Remove OUR entries rather than restoring a whole-file snapshot: a snapshot taken before a
+        // game update would drop everything the update added, which is how Kyalami went missing.
+        foreach ((string reference, Func<PbNode, bool> isOurs) in
+                 (( string, Func<PbNode, bool>)[])
+                 [(TracksTable, IsOurCatalogEntry), (ContainersTable, IsOurSessionEntry)])
         {
-            string snap = Rp(reference) + ".orig";
-            if (File.Exists(snap))
+            List<PbNode> tree = PbTree.ParseTree(File.ReadAllBytes(Rp(reference)));
+            int dropped = TableEditor.RemoveTableEntries(tree, isOurs);
+            if (dropped > 0)
             {
-                File.Copy(snap, Rp(reference), overwrite: true);
-                File.Delete(snap);
-                log($"  restored {reference}");
+                File.WriteAllBytes(Rp(reference), PbTree.EncodeTree(tree));
+                log($"  {reference}: removed {dropped} '{DstDisplay}' entr{(dropped == 1 ? "y" : "ies")}");
             }
         }
+
+        DeleteLegacySnapshots();
 
         int removed = 0;
         foreach ((_, string d) in UiTilePairs())
