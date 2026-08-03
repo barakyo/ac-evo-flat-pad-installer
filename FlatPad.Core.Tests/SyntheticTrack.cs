@@ -86,7 +86,6 @@ public sealed class SyntheticTrack : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         using FileStream fs = File.Create(path);
         fs.SetLength(85_200_000);
-        Directory.CreateDirectory(RefPath.RealPath(Root, "content/tracks/paul_ricard"));
     }
 
     private void WriteReferenceClosure()

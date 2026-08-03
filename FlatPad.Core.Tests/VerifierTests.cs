@@ -99,15 +99,18 @@ public class VerifierTests
     }
 
     [Fact]
-    public void A_leftover_orig_snapshot_means_a_base_track_is_still_modified()
+    public void A_leftover_orig_snapshot_means_the_donor_is_still_modified()
     {
+        // The track is derived from the donor, so deriving from a modified one silently bakes the
+        // modification in. Only an earlier, destructive builder leaves these — this tool reads the
+        // donor and never writes to it.
         using var game = new SyntheticTrack().WithAStrayOrigSnapshot();
 
         VerifyReport report = Verify(game);
 
         Assert.False(report.Passed);
         Assert.True(HasProblem(report, ".orig snapshots remain"));
-        Assert.Contains("1 leftover .orig snapshot(s)", Line(report, "  base tracks ("));
+        Assert.Contains("1 leftover .orig snapshot(s)", Line(report, "  donor ("));
     }
 
     [Fact]

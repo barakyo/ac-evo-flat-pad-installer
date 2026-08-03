@@ -165,8 +165,21 @@ public static class FlatPadSpec
         $"dynamic_track/{Layout}.dynamictrackpresetcompressed",
     ];
 
-    /// <summary>Base tracks this tool has ever written to; install restores them before anything else.</summary>
-    public static readonly string[] BaseTracks = ["sebring", "paul_ricard"];
+    /// <summary>
+    /// Tracks swept for leftover <c>.orig</c> snapshots before deriving anything: the donor only.
+    /// </summary>
+    /// <remarks>
+    /// This tool never writes to a base-game track — it reads the donor and writes to
+    /// <c>content\tracks\flatpad</c>. The sweep exists because an EARLIER, destructive builder
+    /// modified the donor in place and left <c>.orig</c> snapshots beside the files it replaced.
+    /// Restoring those first is what guarantees the track is always derived from stock.
+    ///
+    /// The Python reference also lists <c>paul_ricard</c>, because its <c>--pr-runoff-spawn</c>
+    /// flag moved a spawn on that track. That flag is deliberately not ported — editing a base-game
+    /// track is the one thing this tool exists to avoid — so carrying the name here would describe
+    /// one machine's history rather than anything this tool does.
+    /// </remarks>
+    public static readonly string[] SweptForSnapshots = [Src];
 
     public const string SrcDir = $"content/tracks/{Src}";
     public const string DstDir = $"content/tracks/{Dst}";

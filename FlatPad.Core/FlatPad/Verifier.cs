@@ -75,7 +75,7 @@ public sealed class Verifier(string gameRoot)
         var report = new VerifyReport();
         report.Line($"Verifying '{DstDisplay}':");
 
-        CheckBaseTracksAreStock(report);
+        CheckDonorIsIntact(report);
         CheckTrackReferences(report);
 
         // The geometry checks all measure against the pad's own AABB, so they run only if the pad
@@ -95,10 +95,18 @@ public sealed class Verifier(string gameRoot)
 
     // ------------------------------------------------------------------ 1. base tracks untouched
 
-    private void CheckBaseTracksAreStock(VerifyReport report)
+    /// <summary>
+    /// Is the donor still something we can safely derive a track from?
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ This is a SANITY check, not a tamper check. It catches a donor that an earlier,
+    /// destructive builder gutted — enough to stop a broken track being derived from it — but a mod
+    /// that edits the donor subtly would pass, and Flat Pad would silently inherit the edit.
+    /// </remarks>
+    private void CheckDonorIsIntact(VerifyReport report)
     {
         var strays = new List<string>();
-        foreach (string track in BaseTracks)
+        foreach (string track in SweptForSnapshots)
         {
             string root = Rp($"content/tracks/{track}");
             if (!Directory.Exists(root))
@@ -106,9 +114,9 @@ public sealed class Verifier(string gameRoot)
             strays.AddRange(Directory.EnumerateFiles(root, "*.orig", SearchOption.AllDirectories));
         }
 
-        report.Line($"  base tracks ({string.Join(", ", BaseTracks)}): {strays.Count} leftover .orig snapshot(s)");
+        report.Line($"  donor ({string.Join(", ", SweptForSnapshots)}): {strays.Count} leftover .orig snapshot(s)");
         if (strays.Count > 0)
-            report.Problem($"{strays.Count} .orig snapshots remain — a base track is still modified");
+            report.Problem($"{strays.Count} .orig snapshots remain — the donor is still modified");
 
         string seb = Rp(SrcRef(SrcSceneName));
         double sebMb = File.Exists(seb) ? new FileInfo(seb).Length / 1e6 : 0;

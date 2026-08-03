@@ -96,7 +96,14 @@ diff py.txt cs.txt
 | Archive reading | 201 files sampled from a real 68.5 GB archive extract byte-identical to disk, across a 114,685-entry table. |
 | Unpack round trip | Run end-to-end against a real 599 MB `.kspkg`: detect → free-space check → extract all 650 files → rename aside → detect unpacked → revert → detect packed. Output is **byte-identical to Nenkai's own CLI**. |
 | Unpack at full scale | Run once for real through the GUI: **119,443 files / 68.5 GB**, then reinstall and verify. The whole round trip left all 1530 installed files **byte-identical** to the pre-run baseline. |
-| Unit tests | 78, covering the format layer, the closure crawl, the geometry edits, the archive state machine and progress throttling. |
+| Unit tests | 80, covering the format layer, the closure crawl, the geometry edits, the archive state machine and progress throttling. |
+
+**Known console divergence from the Python** (deliberate, and the only one): the reference sweeps
+`sebring` *and* `paul_ricard` for leftover `.orig` snapshots, because its `--pr-runoff-spawn` flag
+edited Paul Ricard. That flag is not ported — editing a base-game track is the one thing this tool
+exists to avoid — so only the donor is swept, and the wording says "donor" rather than "base
+tracks". That is **1 line** of `verify` output and **2** of `install`. The 1530-file byte
+comparison is unaffected, which is the check that matters.
 
 ## Layout
 

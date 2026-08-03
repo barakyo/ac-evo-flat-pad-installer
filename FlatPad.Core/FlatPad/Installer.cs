@@ -25,11 +25,18 @@ public sealed class Installer(string gameRoot, Action<string> log)
 
     // ------------------------------------------------------------------ stock restore
 
-    /// <summary>Restore every <c>*.orig</c> snapshot an earlier in-place build left behind.</summary>
-    public int RestoreBaseTracks(bool verbose = true)
+    /// <summary>
+    /// Restore any <c>*.orig</c> snapshot an earlier, destructive build left in the donor.
+    /// </summary>
+    /// <remarks>
+    /// Always deriving from stock is the invariant this protects. Nothing in this tool creates
+    /// these snapshots — it never writes to a base-game track — so on a clean install this is a
+    /// no-op that says so.
+    /// </remarks>
+    public int RestoreDonorSnapshots(bool verbose = true)
     {
         int restored = 0;
-        foreach (string track in BaseTracks)
+        foreach (string track in SweptForSnapshots)
         {
             string root = Rp($"content/tracks/{track}");
             if (!Directory.Exists(root))
@@ -46,8 +53,8 @@ public sealed class Installer(string gameRoot, Action<string> log)
         if (verbose)
         {
             log(restored > 0
-                ? $"  base tracks: restored {restored} file(s) to stock"
-                : "  base tracks: already stock");
+                ? $"  donor: restored {restored} file(s) to stock"
+                : "  donor: already stock");
         }
 
         return restored;
@@ -180,7 +187,7 @@ public sealed class Installer(string gameRoot, Action<string> log)
     public void Install()
     {
         log($"Installing '{DstDisplay}' ({Dst}) derived from {Src}:");
-        RestoreBaseTracks();
+        RestoreDonorSnapshots();
         AssertStockSource();
 
         if (Directory.Exists(Rp(DstDir)))
@@ -240,13 +247,13 @@ public sealed class Installer(string gameRoot, Action<string> log)
         // A separate blank line, not an embedded "\n": the log sink owns the line ending.
         log("");
         log($"Done. Launch the game (unpacked) -> select '{DstDisplay}' -> Practice.");
-        log("Sebring and Paul Ricard are stock. Undo with --uninstall.");
+        log($"{SrcDisplay} is untouched — it was only ever read. Undo with --uninstall.");
     }
 
     public void Uninstall()
     {
         log($"Removing '{DstDisplay}':");
-        RestoreBaseTracks();
+        RestoreDonorSnapshots();
         if (Directory.Exists(Rp(DstDir)))
         {
             Directory.Delete(Rp(DstDir), recursive: true);
