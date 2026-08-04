@@ -14,6 +14,16 @@ public sealed class VerifyReport
     public List<string> Lines { get; } = [];
     public List<string> Problems { get; } = [];
 
+    /// <summary>
+    /// What the stock-registry comparison found, for a caller that wants to act on it.
+    /// </summary>
+    /// <remarks>
+    /// Structured rather than scraped back out of <see cref="Problems"/>: repair needs the stock
+    /// entry NODES, and opening the archive again to re-derive them would be both slow and a second
+    /// chance to disagree with what the user was just shown.
+    /// </remarks>
+    public RegistryDiff? Registry { get; internal set; }
+
     public bool Passed => Problems.Count == 0;
 
     /// <summary>Exit code: 0 on pass, 1 on fail.</summary>

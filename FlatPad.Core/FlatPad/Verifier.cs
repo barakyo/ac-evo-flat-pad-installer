@@ -1,3 +1,4 @@
+using FlatPad.Core.Game;
 using FlatPad.Core.Protobuf;
 using FlatPad.Core.Refs;
 using FlatPad.Core.Scene;
@@ -33,7 +34,12 @@ public enum FlatPadState
     Installed,
 }
 
-public sealed class Verifier(string gameRoot)
+/// <param name="gameRoot">The unpacked Assetto Corsa EVO folder.</param>
+/// <param name="stock">
+/// Where to read the game's shipped registries from, for the damage check. Null resolves to the
+/// install's own content archive, which is what every caller outside the tests wants.
+/// </param>
+public sealed class Verifier(string gameRoot, IStockRegistry? stock = null)
 {
     /// <summary>
     /// A cheap status check for the UI — is Flat Pad actually going to show up?
@@ -89,6 +95,7 @@ public sealed class Verifier(string gameRoot)
         }
 
         CheckRegistration(report);
+        CheckRegistryAgainstStock(report);
         CheckUiTiles(report);
         return report;
     }
@@ -472,6 +479,54 @@ public sealed class Verifier(string gameRoot)
         }
 
         return name;    // Academy events and other one-offs
+    }
+
+    // ------------------------------------------------------------------ 4b. the registry is intact
+
+    /// <summary>
+    /// Is anything the GAME registers missing from the registry we have been writing into?
+    /// </summary>
+    /// <remarks>
+    /// The check that would have caught this tool's own worst bug. Registering a track means editing
+    /// a file the game owns and other mods share, and every way of getting that wrong fails the same
+    /// way: silently. A v0.8.1 install had Kyalami's catalog entry deleted by a stale snapshot and
+    /// its menu index taken by a hardcoded number, and nothing reported either — no error, no log,
+    /// this verifier passing, the track simply not in any list.
+    ///
+    /// So it is worth answering the question directly, against the only stock reference available
+    /// offline: the game's own content archive. Damage from any cause is caught, not just ours.
+    ///
+    /// One line on a healthy install, by design. This whole check is absent from the reference
+    /// implementation — the Python has no way to read a <c>.kspkg</c> — so every line it prints is a
+    /// line of console divergence, and the per-entry detail is worth that only when there is
+    /// something to say.
+    /// </remarks>
+    private void CheckRegistryAgainstStock(VerifyReport report)
+    {
+        RegistryDiff diff = RegistryIntegrity.Compare(gameRoot, stock ?? ArchiveStockRegistry.ForGame(gameRoot));
+        report.Registry = diff;
+
+        if (!diff.Available)
+        {
+            report.Line($"  registry vs stock: skipped ({diff.Source})");
+            return;
+        }
+
+        report.Line($"  registry vs stock ({diff.Source}): {diff.StockCatalog} catalog + "
+                    + $"{diff.StockSessions} session entries in stock, {diff.Damaged.Count} missing live"
+                    + (diff.Absent.Count > 0 ? $" ({diff.Absent.Count} not installed here)" : ""));
+
+        foreach (StockEntry e in diff.Damaged)
+        {
+            report.Problem($"{e.Describe} is in the game's stock {Path.GetFileName(e.Table)} and its files "
+                           + $"are on disk, but it is missing from the live one — that track will not "
+                           + "appear where the menus enumerate it. 'repair' puts it back.");
+        }
+
+        // Not a problem: the archive holding content this install does not have is what an archive
+        // from a different game version looks like, and there is nothing to fix.
+        foreach (StockEntry e in diff.Absent.Take(5))
+            report.Line($"    in stock but not installed here, so not ours to restore: {e.Describe}");
     }
 
     // ------------------------------------------------------------------ 5. ui tiles

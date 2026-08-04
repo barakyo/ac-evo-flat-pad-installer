@@ -96,8 +96,7 @@ internal sealed class MainForm : Form
             log => new Installer(GameRoot, log).Install());
         _uninstall.Click += async (_, _) => await RunAsync("Removing Flat Pad",
             log => new Installer(GameRoot, log).Uninstall());
-        _verify.Click += async (_, _) => await RunAsync("Verifying",
-            log => log(new Verifier(GameRoot).Run().Render().TrimEnd()));
+        _verify.Click += async (_, _) => await VerifyAsync();
 
         string? found = GameLocator.Find();
         _gamePath.Text = found ?? "";
@@ -346,6 +345,46 @@ internal sealed class MainForm : Form
         {
             EndWork();
         }
+    }
+
+    /// <summary>
+    /// Verify, and offer to fix the one problem the user cannot fix by re-installing.
+    /// </summary>
+    /// <remarks>
+    /// Everything else <c>verify</c> reports is repaired by pressing Install again. Missing
+    /// BASE-GAME registry entries are not: rebuilding our own track cannot put back a catalog entry
+    /// that was deleted from underneath another track. So it is offered here, in the one place where
+    /// the damage has actually been demonstrated rather than guessed at — and never as a standing
+    /// button, because the check has to open the game's 70 GB archive to know.
+    /// </remarks>
+    private async Task VerifyAsync()
+    {
+        VerifyReport? report = null;
+        await RunAsync("Verifying", log =>
+        {
+            report = new Verifier(GameRoot).Run();
+            log(report.Render().TrimEnd());
+        });
+
+        if (report?.Registry is not { Damaged.Count: > 0 } diff)
+            return;
+
+        string tracks = string.Join("\n  ", diff.DamagedTracks);
+        DialogResult answer = MessageBox.Show(this,
+            $"""
+            These base-game tracks have files on disk but are missing from the game's track
+            registry, so they will not appear in any menu:
+
+              {tracks}
+
+            Their entries are still in the game's own content archive ({diff.Source}).
+            Restore just those entries? Nothing else in the registry is touched.
+            """,
+            "Registry entries missing", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (answer != DialogResult.Yes)
+            return;
+
+        await RunAsync("Repairing the registry", log => new Installer(GameRoot, log).RepairRegistry(diff));
     }
 
     private async Task UnpackAsync()

@@ -4,8 +4,6 @@ using FlatPad.Core.Protobuf;
 using FlatPad.Core.Refs;
 using FlatPad.Core.Tables;
 
-using static FlatPad.Core.Tests.PbFixture;
-
 namespace FlatPad.Core.Tests;
 
 /// <summary>
@@ -26,66 +24,21 @@ public class RegistryResilienceTests : IDisposable
 
     private Installer Installer => new(_root, _log.Add);
 
-    private static byte[] CatalogEntry(string name) =>
-        MessageField(3, MessageField(2, Cat(
-            StringField(1, name),
-            StringField(3, $"content\\tracks\\{name.ToLowerInvariant().Replace(' ', '_')}"))));
+    private void Write(string reference, byte[] data) => RegistryFixture.Write(_root, reference, data);
 
-    private static byte[] SessionEntry(string session, string track, ulong id, ulong index) =>
-        MessageField(3, MessageField(8, Cat(
-            StringField(1, session),
-            StringField(3, $"content\\tracks\\{track.ToLowerInvariant()}"),
-            VarintField(8, id),
-            StringField(10, track),
-            VarintField(21, index))));
+    private List<PbNode> ReadTable(string reference) => RegistryFixture.ReadTable(_root, reference);
 
-    private void WriteTables(IEnumerable<byte[]> catalog, IEnumerable<byte[]> sessions)
-    {
-        Write("system/tracks.table", MessageField(2, Cat([.. catalog])));
-        Write("system/track_containers.table", MessageField(2, Cat([.. sessions])));
-    }
+    private List<string?> CatalogNames() => RegistryFixture.CatalogNames(_root);
 
-    private void Write(string reference, byte[] data)
-    {
-        string path = RefPath.RealPath(_root, reference);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllBytes(path, data);
-    }
-
-    private List<PbNode> ReadTable(string reference) =>
-        PbTree.ParseTree(File.ReadAllBytes(RefPath.RealPath(_root, reference)));
-
-    private List<string?> CatalogNames()
-    {
-        (_, List<PbNode> e) = TableEditor.TableEntries(ReadTable("system/tracks.table"));
-        return e.Select(x => TableEditor.TextAt(x, 2, 1)).ToList();
-    }
-
-    private List<(string? Track, ulong Index)> SessionIndices()
-    {
-        (_, List<PbNode> e) = TableEditor.TableEntries(ReadTable("system/track_containers.table"));
-        return e.Select(x => (TableEditor.TextAt(x, 8, 10),
-            TableEditor.Child(x, 8, 21)?.Varint ?? 0)).ToList();
-    }
+    private List<(string? Track, ulong Index)> SessionIndices() =>
+        RegistryFixture.Sessions(_root).Select(x => (x.Track, x.Index)).ToList();
 
     /// <summary>A stock-looking registry: the donor at index 36, plus whatever an update added.</summary>
     private void WriteStockRegistry(bool withUpdateTrack)
     {
-        var catalog = new List<byte[]> { CatalogEntry("Sebring International Raceway") };
-        var sessions = new List<byte[]>
-        {
-            SessionEntry("GP Time Attack", "Sebring International Raceway", 5954, 36),
-            SessionEntry("GP Hotstint", "Sebring International Raceway", 5954, 36),
-            SessionEntry("No Game Mode", "Sebring International Raceway", 5954, 36),
-        };
-        if (withUpdateTrack)
-        {
-            catalog.Add(CatalogEntry("Kyalami"));
-            sessions.Add(SessionEntry("GP Time Attack", "Kyalami", 6001, 37));
-            sessions.Add(SessionEntry("GP Race", "Kyalami", 6001, 37));
-        }
-
-        WriteTables(catalog, sessions);
+        (byte[] catalog, byte[] sessions) = RegistryFixture.StockTables(withUpdateTrack);
+        Write("system/tracks.table", catalog);
+        Write("system/track_containers.table", sessions);
     }
 
     // ------------------------------------------------------------------ the Kyalami bugs
@@ -161,7 +114,8 @@ public class RegistryResilienceTests : IDisposable
     {
         WriteStockRegistry(withUpdateTrack: true);
         // An older version of this tool left one behind, holding a pre-update registry.
-        Write("system/tracks.table.orig", MessageField(2, CatalogEntry("Sebring International Raceway")));
+        Write("system/tracks.table.orig",
+            RegistryFixture.CatalogTable([RegistryFixture.CatalogEntry(RegistryFixture.Donor)]));
 
         Installer.Register();
 

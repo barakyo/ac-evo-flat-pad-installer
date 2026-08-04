@@ -231,6 +231,73 @@ public sealed class Installer(string gameRoot, Action<string> log)
         }
     }
 
+    // ------------------------------------------------------------------ repair
+
+    /// <summary>
+    /// Put back base-game registry entries that are missing, without disturbing anything else.
+    /// </summary>
+    /// <remarks>
+    /// This repairs damage of the kind this tool used to cause: a stale snapshot written back over
+    /// a registry a game update had grown, which deleted Kyalami's catalog entry outright. Silent,
+    /// as all registry damage is.
+    ///
+    /// ⚠️ It restores ENTRIES, never a whole table. A wholesale restore from the archive would be
+    /// the same sin in the other direction — it would delete every other mod's registration, and
+    /// ours. Only entries the live table is actually missing are appended, cloned verbatim so each
+    /// keeps the id and dense menu index the game gave it.
+    ///
+    /// A restored entry is byte-identical to the one the game ships — measured, by rebuilding a
+    /// damaged copy of a real registry and hashing every entry against the pristine file. What does
+    /// NOT come back is its POSITION: entries are appended, so a restored one sits at the end rather
+    /// than where it was. Registration is keyed by the fields inside an entry (this tool's own
+    /// entries have always been appended and are found correctly), so that is a difference without
+    /// a consequence — but it is a real difference, and worth knowing before comparing files.
+    ///
+    /// ⚠️ Re-registering afterwards is load-bearing, not tidiness. In the very case being repaired
+    /// our own entry is sitting ON the index the missing track owns, so restoring that track without
+    /// re-allocating ours would rebuild the collision that hid it. <see cref="Register"/> allocates
+    /// above whatever the table now holds, which is the restored value.
+    /// </remarks>
+    /// <returns>How many entries were restored.</returns>
+    public int RepairRegistry(RegistryDiff diff)
+    {
+        if (!diff.Available)
+            throw new InstallException($"the registry cannot be checked against stock: {diff.Source}");
+
+        log($"Repairing the track registry against {diff.Source}:");
+        if (diff.Damaged.Count == 0)
+        {
+            log("  nothing to restore — every stock entry this install has content for is registered");
+            foreach (StockEntry e in diff.Absent.Take(5))
+                log($"  in stock but not installed here, so not ours to restore: {e.Describe}");
+            return 0;
+        }
+
+        int restored = 0;
+        foreach (IGrouping<string, StockEntry> group in diff.Damaged.GroupBy(d => d.Table, StringComparer.Ordinal))
+        {
+            List<PbNode> tree = PbTree.ParseTree(File.ReadAllBytes(Rp(group.Key)));
+            foreach (StockEntry entry in group)
+            {
+                TableEditor.AppendEntry(tree, entry.Entry);
+                log($"  {group.Key}: restored {entry.Describe}");
+                restored++;
+            }
+
+            File.WriteAllBytes(Rp(group.Key), PbTree.EncodeTree(tree));
+        }
+
+        if (Directory.Exists(Rp(DstDir)))
+        {
+            log($"  re-registering '{DstDisplay}' so its index is allocated above the restored entries:");
+            Register();
+        }
+
+        log("");
+        log($"Done. Restored {restored} base-game registry entr{(restored == 1 ? "y" : "ies")}.");
+        return restored;
+    }
+
     private int CopyUiTiles()
     {
         int copied = 0;

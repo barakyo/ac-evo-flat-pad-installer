@@ -11,8 +11,10 @@ const string Usage = """
       install                    build + register the track (idempotent)
       uninstall                  remove it and restore stock content
       verify                     check an existing install (read-only)
+      repair                     restore base-game registry entries that have gone missing
       unpack                     unpack the game archive so loose tracks load
       revert [--archive F]       put the archive back (--archive picks one if several exist)
+                                 (--archive also names the stock reference for verify/repair)
       check-unpack [--archive F] sample the loose files against the archive they came from
 
     --game <path>   the Assetto Corsa EVO folder. Auto-detected from Steam if omitted.
@@ -75,9 +77,21 @@ try
 
         case "verify":
             RequireUnpackedContent(gameRoot);
-            VerifyReport report = new Verifier(gameRoot).Run();
+            VerifyReport report = new Verifier(gameRoot,
+                archive is not null ? new ArchiveStockRegistry(archive) : null).Run();
             Console.Out.Write(report.Render());
             return report.ExitCode;
+
+        case "repair":
+        {
+            RequireUnpackedContent(gameRoot);
+            // Detect and repair in one pass: the diff carries the stock entry nodes, so restoring
+            // them needs no second look at the archive and cannot disagree with what was reported.
+            RegistryDiff diff = RegistryIntegrity.Compare(gameRoot,
+                archive is not null ? new ArchiveStockRegistry(archive) : ArchiveStockRegistry.ForGame(gameRoot));
+            new Installer(gameRoot, Console.Out.WriteLine).RepairRegistry(diff);
+            return 0;
+        }
 
         case "install":
             RequireUnpackedContent(gameRoot);

@@ -94,6 +94,25 @@ public static class TableEditor
         return entry;
     }
 
+    /// <summary>Append an entry node verbatim, keeping every field it already carries.</summary>
+    /// <remarks>
+    /// Used to put back a stock entry a broken tool removed. Unlike
+    /// <see cref="AppendTableEntry"/> nothing is rewritten — the whole point is that the restored
+    /// entry keeps the game's own id and dense menu index, which is what makes it the entry the
+    /// update shipped rather than a lookalike.
+    /// </remarks>
+    public static PbNode AppendEntry(List<PbNode> tree, PbNode entry)
+    {
+        (PbNode root, _) = TableEntries(tree);
+        if (root.Message is null)
+            throw new InvalidDataException("the [2] container holds no entries to append to");
+
+        PbNode clone = CloneNode(entry);
+        root.Message.Add(clone);
+        root.Dirty = true;
+        return clone;
+    }
+
     /// <summary>Drop every <c>[2.3]</c> entry matching <paramref name="predicate"/>. Returns the count.</summary>
     public static int RemoveTableEntries(List<PbNode> tree, Func<PbNode, bool> predicate)
     {
