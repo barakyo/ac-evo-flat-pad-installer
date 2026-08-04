@@ -1,0 +1,3 @@
+[submodule "external/ACEvo.Package"]
+	path = external/ACEvo.Package
+	url = https://github.com/Nenkai/ACEvo.Package.git
