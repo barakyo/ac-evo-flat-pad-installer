@@ -57,8 +57,26 @@ dotnet test  FlatPadInstaller.slnx
 A portable single-file build — one ~49 MB `.exe`, no runtime to install first:
 
 ```
-dotnet publish FlatPad.App -c Release -o out
+dotnet publish FlatPad.App -c Release -o out          # -> out/FlatPadInstaller.exe
 ```
+
+That is the whole build. The three `.pdb` files beside it are debug symbols and are not needed to
+run — the exe carries the .NET runtime and its native libraries inside itself, which is the 49 MB.
+
+To cut a release, add the version to the filename **from a terminal**, and upload that:
+
+```
+mv out/FlatPadInstaller.exe out/FlatPadInstaller-v1.0.0.exe
+sha256sum out/FlatPadInstaller-v1.0.0.exe
+```
+
+⚠️ Not from Explorer. It hides known extensions, so typing a name ending in `.exe` over a file whose
+`.exe` is already hidden produces `…exe.exe` — which on an unsigned download reads as the oldest
+malware disguise there is. This has happened once already.
+
+Two builds of the same commit are not byte-identical (.NET stamps a fresh build id), so publish the
+hash of the file you actually upload. The exe reports the commit it was built from in its file
+properties, which is the durable way to identify a build.
 
 ## Using the dev CLI
 

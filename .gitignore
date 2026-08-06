@@ -1,7 +1,9 @@
-# Build output
+# Build output. Both names: the README publishes to out/, and -o takes whatever you type, so a
+# 49 MB exe is otherwise one `git add -A` away from the history.
 bin/
 obj/
 publish/
+out/
 *.user
 
 # Test / coverage

@@ -7,8 +7,17 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!-- The published file is what a stranger downloads, so it is named for what it does rather
+         than for the project that builds it. Renaming it by hand afterwards is how a release once
+         went out as FlatPadInstaller-v1.0.0.exe.exe: Explorer hides known extensions, so typing a
+         name that ends in ".exe" over one it is already hiding gets you both. -->
+    <AssemblyName>FlatPadInstaller</AssemblyName>
+    <Version>1.0.0</Version>
+
     <AssemblyTitle>Flat Pad Installer</AssemblyTitle>
     <Product>Flat Pad Installer</Product>
+    <Company>itsbarakyo</Company>
     <Description>Installs the Flat Pad test track for Assetto Corsa EVO.</Description>
   </PropertyGroup>
 
