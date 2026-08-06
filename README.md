@@ -15,9 +15,9 @@ There are essentially 3 steps to installing a new map:
 
 ### Step 1: Unpacking
 
-Assetto Corsa EVO ships with a `content.kspg`. Essentially, when the game loads up, it looks for
+Assetto Corsa EVO ships with a `content.kspkg`. Essentially, when the game loads up, it looks for
 this file and reads all of the game's content from the file. If the file is not there, it looks for
-content in the game's `contents/`. Step 1 of installing a new track, first requires unpacking the game.
+content in the game's `content/`. Step 1 of installing a new track, first requires unpacking the game.
 
 To unpack the game, this script builds on top of [Nenkai's ACEvo.Package](https://github.com/Nenkai/ACEvo.Package).
 This portion mainly provides a GUI to make running the command a little more user friendly.
@@ -38,11 +38,14 @@ thing left was just the track surface. The second part of this script does exact
 
 ### Step 3: Update the track table
 
-Unfortunately adding the map to the `contents/` folder is not enough.A track only appears in the menus
+Unfortunately adding the map to the `content/` folder is not enough. A track only appears in the menus
 once it is registered in two `system\*.table` registries.
 
-Base-game content is left byte-identical to what Kunos ships. The two registries are always rebuilt
-from a `.orig` snapshot rather than appended to, so re-running can never stack duplicate entries.
+Base-game content is left byte-identical to what Kunos ships. Registering reads the **live**
+registry and strips out this tool's own entries before adding them back, so re-running can never
+stack duplicates. It deliberately does not restore a snapshot taken on a previous run: a snapshot
+from before a game update would silently revert whatever that update added, which once cost a
+base-game track its entry outright.
 
 ## Building
 
