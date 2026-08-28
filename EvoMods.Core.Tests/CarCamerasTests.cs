@@ -62,22 +62,38 @@ public class CarCamerasTests : IDisposable
         MessageField(1, Cat(values.Select(BitConverter.GetBytes).ToArray()));
 
     /// <summary>
+    /// A file whose cars are not all on the same framing — which is what this file usually is.
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ ONE field-of-view pair for the whole file, because that is all the format has: the drivable
+    /// path carries a single packed array shared by every car. It is taken from the first car's
+    /// preset, the way the real file carries whatever was applied to it last — so a car left on Stock
+    /// GEOMETRY inside a file whose lens is Wide's matches no preset at all, exactly as the three
+    /// cars v0.9 appended did.
+    /// </remarks>
+    private static byte[] MixedFile(params (string Car, ChaseCamPreset Preset)[] cars)
+    {
+        ChaseCamPreset lens = cars[0].Preset;
+
+        return Cat(
+            MessageField(1, Cat(
+                Fovs(50f, 52f, 54f, 56f, lens.Near.Fov, lens.Far.Fov),
+                Cat(cars.Select(c => Entry(c.Car, c.Preset.Near, c.Preset.Far)).ToArray()))),
+            MessageField(2, Cat(StringField(1, "onboard"), Fixed32Field(3, 68f))),
+            VarintField(3, 4),
+            VarintField(4, 1));
+    }
+
+    /// <summary>
     /// A file at the shipped convention: two cars, the four driven views set to something distinct,
     /// an onboard section and the two trailers.
     /// </summary>
     private static byte[] StockFile(params string[] cars)
     {
-        ChaseCamPreset stock = ChaseCamSpec.Stock;
         if (cars.Length == 0)
             cars = [ChaseCamSpec.ReferenceCar, "ks_toyota_gr86"];
 
-        return Cat(
-            MessageField(1, Cat(
-                Fovs(50f, 52f, 54f, 56f, stock.Near.Fov, stock.Far.Fov),
-                Cat(cars.Select(c => Entry(c, stock.Near, stock.Far)).ToArray()))),
-            MessageField(2, Cat(StringField(1, "onboard"), Fixed32Field(3, 68f))),
-            VarintField(3, 4),
-            VarintField(4, 1));
+        return MixedFile(cars.Select(c => (c, ChaseCamSpec.Stock)).ToArray());
     }
 
     private void Given(byte[] bytes) => File.WriteAllBytes(_file, bytes);
@@ -124,6 +140,10 @@ public class CarCamerasTests : IDisposable
         Assert.Equal(6.19f, reading.Far.Distance, 3);
     }
 
+    /// <remarks>
+    /// The agreeing case. Its counterpart, where that car is itself the one that drifted, is
+    /// <see cref="The_reference_car_does_not_speak_for_the_file_when_it_is_the_drift"/>.
+    /// </remarks>
     [Fact]
     public void The_car_every_preset_was_tuned_against_is_the_one_reported()
     {
@@ -150,6 +170,174 @@ public class CarCamerasTests : IDisposable
         CarCameras.Write(new ChaseCamView(1.5f, 5f, -4f, 80f), Named("Stock").Far, _ => { }, _file, false);
 
         Assert.Null(CarCameras.Read(_file).Preset);
+    }
+
+    // ---- cars that do not agree with each other
+
+    /// <summary>
+    /// The v0.9 case: thirteen cars tuned, three the game appended at their own defaults.
+    /// </summary>
+    /// <remarks>
+    /// The screen has to keep reading Wide. Refusing to name a preset the moment the cars disagree
+    /// left it on "Custom" while the sliders showed Wide's exact numbers, and nothing anywhere said
+    /// three cars were somewhere else — so the only symptom was the R8 framing differently in a
+    /// replay that had already been recorded.
+    /// </remarks>
+    [Fact]
+    public void The_framing_most_cars_are_on_is_the_one_reported()
+    {
+        List<(string, ChaseCamPreset)> cars = [];
+        for (int i = 0; i < 13; i++)
+            cars.Add(($"tuned_{i}", Named("Wide")));
+        cars.Add(("ks_audi_r8_lms_gt3_evo_2", ChaseCamSpec.Stock));
+        cars.Add(("ks_bmw_m2_coupe", ChaseCamSpec.Stock));
+        cars.Add(("ks_porsche_718_cayman_gt4_rs", ChaseCamSpec.Stock));
+        Given(MixedFile(cars.ToArray()));
+
+        ChaseCamReading reading = CarCameras.Read(_file);
+
+        Assert.Equal("Wide", reading.Preset?.Name);
+        Assert.False(reading.Uniform);
+        Assert.Equal(
+            ["ks_audi_r8_lms_gt3_evo_2", "ks_bmw_m2_coupe", "ks_porsche_718_cayman_gt4_rs"],
+            reading.Drifted);
+        Assert.Equal(2, reading.Framings.Count);
+        Assert.Equal(13, reading.Framings[0].Cars.Count);
+    }
+
+    [Fact]
+    public void A_file_that_agrees_with_itself_reports_no_drift()
+    {
+        Given(StockFile("a_car", "b_car", "c_car"));
+
+        ChaseCamReading reading = CarCameras.Read(_file);
+
+        Assert.True(reading.Uniform);
+        Assert.Empty(reading.Drifted);
+        Assert.Single(reading.Framings);
+        Assert.Equal(3, reading.Framings[0].Cars.Count);
+    }
+
+    [Fact]
+    public void A_file_that_is_not_there_reports_no_drift_either()
+    {
+        Assert.Empty(ChaseCamReading.Absent.Drifted);
+        Assert.Empty(ChaseCamReading.Absent.Framings);
+        Assert.True(ChaseCamReading.Absent.Uniform);
+    }
+
+    /// <summary>The behaviour change worth pinning.</summary>
+    /// <remarks>
+    /// Opening the in-game camera settings screen regenerates entries, so the car every preset was
+    /// measured against is not itself immune to the drift. A rule that always spoke for that one car
+    /// would let a single regenerated R34 report the whole file as Stock — and then offer to flatten
+    /// every tuned car in it.
+    /// </remarks>
+    [Fact]
+    public void The_reference_car_does_not_speak_for_the_file_when_it_is_the_drift()
+    {
+        Given(MixedFile(
+            ("a_car", Named("Wide")),
+            ("b_car", Named("Wide")),
+            (ChaseCamSpec.ReferenceCar, ChaseCamSpec.Stock)));
+
+        ChaseCamReading reading = CarCameras.Read(_file);
+
+        Assert.Equal("a_car", reading.Representative);
+        Assert.Equal("Wide", reading.Preset?.Name);
+        Assert.Equal([ChaseCamSpec.ReferenceCar], reading.Drifted);
+    }
+
+    [Fact]
+    public void The_reference_car_still_speaks_for_the_framing_it_is_on()
+    {
+        Given(MixedFile(
+            ("a_car", Named("Wide")),
+            (ChaseCamSpec.ReferenceCar, Named("Wide")),
+            ("c_car", ChaseCamSpec.Stock)));
+
+        Assert.Equal(ChaseCamSpec.ReferenceCar, CarCameras.Read(_file).Representative);
+    }
+
+    /// <remarks>
+    /// The tolerance decision, pinned. The R34 shipped with z = -5.190157 against the preset table's
+    /// 5.19 — 1.6e-4 apart, which is inside the 1e-3 that <see cref="ChaseCamSpec.Match"/> uses and
+    /// outside a tighter one. Group any tighter than Match and the screen reports cars out of line
+    /// with a preset it claims in the same breath to be on.
+    /// </remarks>
+    [Fact]
+    public void A_distance_a_thousandth_off_is_the_same_framing_not_a_drifted_car()
+    {
+        ChaseCamPreset stock = ChaseCamSpec.Stock;
+        ChaseCamPreset gizmo = stock with { Near = stock.Near with { Distance = 5.190157f } };
+
+        Given(MixedFile(("a_car", stock), ("b_car", gizmo)));
+
+        ChaseCamReading reading = CarCameras.Read(_file);
+
+        Assert.True(reading.Uniform);
+        Assert.Equal("Stock", reading.Preset?.Name);
+    }
+
+    /// <remarks>
+    /// The reference script inferred from "the most common among cars that MATCH A PRESET", and that
+    /// filter is what stops a car sitting at arbitrary values ever speaking for the file.
+    /// </remarks>
+    [Fact]
+    public void An_even_split_is_settled_by_which_side_matches_a_preset()
+    {
+        ChaseCamPreset wide = Named("Wide");
+        ChaseCamPreset odd = wide with { Near = wide.Near with { Height = 1.42f } };
+
+        // The odd pair first, so file order on its own would have picked it.
+        Given(MixedFile(("a_car", odd), ("b_car", odd), ("c_car", wide), ("d_car", wide)));
+
+        ChaseCamReading reading = CarCameras.Read(_file);
+
+        Assert.Equal("Wide", reading.Preset?.Name);
+        Assert.Equal(["a_car", "b_car"], reading.Drifted);
+    }
+
+    /// <remarks>
+    /// The degenerate file, and not a hypothetical one — it is what the reference PowerShell script
+    /// produced for years, because its -Car defaulted to a single car. The numbers have to stay sane;
+    /// what must NOT happen is the page explaining this as cars the game appended.
+    /// </remarks>
+    [Fact]
+    public void A_file_tuned_car_by_car_reports_every_framing_it_holds()
+    {
+        ChaseCamPreset wide = Named("Wide");
+        List<(string, ChaseCamPreset)> cars = [];
+        for (int i = 0; i < 5; i++)
+            cars.Add(($"car_{i}", wide with { Near = wide.Near with { Height = 1.10f + (i * 0.1f) } }));
+        Given(MixedFile(cars.ToArray()));
+
+        ChaseCamReading reading = CarCameras.Read(_file);
+
+        Assert.Equal(5, reading.Framings.Count);
+        Assert.All(reading.Framings, f => Assert.Single(f.Cars));
+        Assert.Equal(4, reading.Drifted.Count);
+
+        // Nothing matches a preset and every group is one car, so the earliest entry speaks — which
+        // is the oldest, because the game APPENDS.
+        Assert.Equal("car_0", reading.Representative);
+    }
+
+    [Fact]
+    public void Applying_from_a_drifted_file_brings_every_car_into_line()
+    {
+        Given(MixedFile(
+            ("a_car", Named("Wide")),
+            ("b_car", Named("Wide")),
+            ("c_car", ChaseCamSpec.Stock)));
+
+        Write(Named("Wide"));
+
+        ChaseCamReading after = CarCameras.Read(_file);
+        Assert.True(after.Uniform);
+        Assert.Empty(after.Drifted);
+        Assert.Single(after.Framings);
+        Assert.Equal("Wide", after.Preset?.Name);
     }
 
     // ---- writing

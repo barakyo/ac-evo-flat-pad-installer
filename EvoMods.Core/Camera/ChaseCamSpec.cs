@@ -62,6 +62,23 @@ public sealed record ChaseCamView(float Height, float Distance, float Pitch, flo
 
     public bool Matches(ChaseCamView other, float tolerance = 1e-3f) =>
         Enum.GetValues<ChaseCamAxis>().All(a => Math.Abs(this[a] - other[a]) <= tolerance);
+
+    /// <summary>Do these two sit in the same place? Field of view deliberately not consulted.</summary>
+    /// <remarks>
+    /// For comparing one car in the file against another, where <see cref="Matches"/> would be right
+    /// only by accident: field of view is one packed array shared by every car, so two cars can never
+    /// differ on it, and including it in the comparison quietly documents the opposite.
+    /// <para>
+    /// The tolerance matches <see cref="Matches"/>, and has to. <see cref="ChaseCamSpec.Match"/> is
+    /// hard-wired to that default, so anything tighter here would separate cars the preset table calls
+    /// identical — a screen reporting cars out of line with a preset it claims in the same breath to
+    /// be on.
+    /// </para>
+    /// </remarks>
+    public bool SameGeometry(ChaseCamView other, float tolerance = 1e-3f) =>
+        Math.Abs(Height - other.Height) <= tolerance
+        && Math.Abs(Distance - other.Distance) <= tolerance
+        && Math.Abs(Pitch - other.Pitch) <= tolerance;
 }
 
 /// <param name="Blurb">What this one is FOR — the reason to pick it over its neighbour.</param>
@@ -123,7 +140,15 @@ public static class ChaseCamSpec
     /// </remarks>
     public const int FirstWritableFov = 4;
 
-    /// <summary>The car whose geometry is shown when the file's cars disagree.</summary>
+    /// <summary>
+    /// The car every preset was measured against, preferred when reporting what a file is set to.
+    /// </summary>
+    /// <remarks>
+    /// A preference, not a rule. When the file's cars disagree it is the framing MOST of them are on
+    /// that gets reported, and this car only decides which of that group to quote — because it is not
+    /// immune to the drift itself. Opening the in-game camera screen regenerates entries, and a rule
+    /// that always spoke for this one car would let a single regenerated R34 misreport the whole file.
+    /// </remarks>
     public const string ReferenceCar = "nissan_skyline_r34_gtr";
 
     // ---- the presets
@@ -186,8 +211,8 @@ public static class ChaseCamSpec
     /// </summary>
     /// <remarks>
     /// These bounds are the UI's, not the game's. The FOV pair is the one exception: 20..130 is a
-    /// hard refusal in the writer too, because a packed float shared by twelve cars is not somewhere
-    /// to discover that 400 was accepted.
+    /// hard refusal in the writer too, because a packed float shared by every car in the file is not
+    /// somewhere to discover that 400 was accepted.
     /// </remarks>
     public static readonly ChaseCamKnob[] Knobs =
     [

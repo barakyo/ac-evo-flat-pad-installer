@@ -34,6 +34,13 @@
                     <TextBlock Text="Chase camera framing" FontSize="19" Margin="0,0,0,6"
                                Style="{StaticResource BodyStrongTextBlockStyle}" />
 
+                    <!-- Its own bar rather than a fourth case in the page's Notice above: this is
+                         about ONE of the two files, and that bar leads with "a settings file is
+                         missing" — so a missing BEHAVIOUR file would have hidden it. -->
+                    <InfoBar x:Name="FramingNotice" IsOpen="False" IsClosable="False"
+                             Severity="Warning" MaxWidth="640" Margin="0,0,0,4"
+                             HorizontalAlignment="Left" />
+
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <TextBlock Text="Preset" MinWidth="210" VerticalAlignment="Center"
                                    Style="{StaticResource BodyStrongTextBlockStyle}" />

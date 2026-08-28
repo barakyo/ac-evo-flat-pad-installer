@@ -124,15 +124,15 @@ than letting it keep claiming a preset it no longer matches. Every preset is rea
 
 Three things about this file are worth knowing:
 
-- **Field of view is global.** One packed array indexed by camera, shared by all twelve cars; the
-  drivable path has no per-car field to narrow it to. It is written as part of the preset because it
-  is most of what makes `Wide` feel wide. The four indices belonging to the views you actually drive
-  from are hard-refused.
+- **Field of view is global.** One packed array indexed by camera, shared by every car in the file;
+  the drivable path has no per-car field to narrow it to. It is written as part of the preset because
+  it is most of what makes `Wide` feel wide. The four indices belonging to the views you actually
+  drive from are hard-refused.
 - **Geometry is per-car, and every car is written.** There is no car picker, because a preset that
-  moved the lens on one car and the field of view on all twelve would be the confusing half-measure
-  rather than the safe one. A file tuned one car at a time therefore matches no preset: the screen
-  falls back to `Custom` showing a representative car, and Apply stays available because there is
-  still work to do even when those values match exactly.
+  moved the lens on one car and the field of view on all of them would be the confusing half-measure
+  rather than the safe one. When the cars disagree the screen reports the framing **most of them are
+  on** — it still names the preset rather than falling back to `Custom` — and warns which cars are
+  not on it and what they are on instead.
 - **Side offset is set to zero rather than preserved.** A non-zero `x` is what dragging the in-game
   gizmo leaves behind; the R34 shipped with 0.25, which is 25 cm toward the passenger side on a
   right-hand-drive car and pushed the subject off frame centre.
@@ -140,6 +140,29 @@ Three things about this file are worth knowing:
 ⚠️ `Stock` is the shipped **family convention** — every Kunos car is 1.80 / 2.50 — not a byte-exact
 revert of your own file, because several cars carry values that were drift rather than design. A
 backup is what reverses a specific edit; each write leaves one in `carcameras_backups\`.
+
+### New cars arrive on the shipped framing, silently
+
+The single most surprising thing about this file, and the reason the drift warning exists. It is
+**not** a global setting with per-car overrides: the game **appends an entry at the car's own
+`.actor` default the first time you drive that car**. Applying a preset only ever covers the cars
+that existed *when you applied it*, so every content update quietly adds cars on the shipped framing
+while the ones you tuned stay tuned. Nothing in the game says so, and the only symptom is one car
+looking different in a replay — noticed after the recording exists.
+
+Confirmed on `0.9.0+release.48`: the file went 13 → 16 cars, and the three new entries —
+`ks_audi_r8_lms_gt3_evo_2`, `ks_bmw_m2_coupe`, `ks_porsche_718_cayman_gt4_rs` — were exactly the
+three left on Stock `1.80 / 5.19 / −5.0` against thirteen on `Wide`.
+
+So the Camera page names them: how many cars are not on the framing shown, which ones, and what they
+are on instead. Apply brings them into line — and **asks first when the file disagrees with itself**,
+because "the framing most cars are on" is not the same as "the framing you meant". A file holding two
+hand-tuned cars and fourteen the game appended reads as the fourteen, and one unconfirmed click would
+flatten the two.
+
+⚠️ Apply covers the cars **in the file**, and a car you have not driven yet is not in it. Reapplying
+after an update is therefore not enough on its own — drive the new cars once, then apply. Better
+still, check this screen before a capture session rather than after an update.
 
 ### Behaviour
 
@@ -178,9 +201,10 @@ discards the values.
 Both files are edited in place, so fields this tool does not know about survive. That is a deliberate
 difference from the reference PowerShell script, which rebuilds `camerasettings.camerasettings` from
 the six settings it understands and silently drops the rest. `CarCameras.carcamerausersettings` holds
-twelve cars of hand-tuned work, so it gets more than that: a preflight that refuses to touch a file
-which does not already round-trip byte-identical, and a read-back afterwards checking every slot it
-meant to write, every slot it did not, the onboard camera section and the trailers.
+every car you have driven and all the tuning on them, so it gets more than that: a preflight that
+refuses to touch a file which does not already round-trip byte-identical, and a read-back afterwards
+checking every slot it meant to write, every slot it did not, the onboard camera section and the
+trailers.
 
 ## How it avoids breaking your game
 
@@ -301,7 +325,8 @@ The Python and PowerShell references stay authoritative until each port is confi
 | Filter tables | The stock 1560-byte and a modified 3411-byte `post_processing.table` both round-trip byte-identical, and the nine rows stock ships hidden are exactly the nine the code names. |
 | Self-update | 0.3.0 installed by hand, then updated to 0.4.0 over the network from GitHub Releases and relaunched. |
 | Chase camera framing | `Wide` applied from the app to the real 12-car file. The reference script's own diff reports exactly the 22 near/far slots changed, **no driven view touched**, and no entry added or removed; its frame-layout figures agree to 0.01 pt. Live file restored byte-identical afterwards. |
-| Unit tests | **287**, covering the protobuf layer, the closure crawl, the geometry edits, the archive state machine, progress throttling, registry integrity, the filter table and install plan, and both camera settings files. |
+| Drift detection | Read against the real 16-car v0.9 file: reports `Wide`, no drift, agreeing with the reference script's own `-Audit` car for car. Against a copy with three cars put back to Stock — the R34 among them — it names those three and falls back to the majority rather than letting the reference car misreport the file. A real 12-car backup from before the app existed reports all 12 framings. |
+| Unit tests | **296**, covering the protobuf layer, the closure crawl, the geometry edits, the archive state machine, progress throttling, registry integrity, the filter table and install plan, and both camera settings files. |
 
 **Console divergence from the Python.** The reference implementation is behind: the five bugs a
 real-world v0.8.1 run exposed were fixed here and never back-ported, and it cannot read a `.kspkg` at

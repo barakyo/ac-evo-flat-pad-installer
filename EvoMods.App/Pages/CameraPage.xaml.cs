@@ -361,12 +361,30 @@ public sealed partial class CameraPage : Page
 
     // ---- state
 
-    private void Refresh()
+    /// <param name="keepError">
+    /// A failure to show instead of the standing notices. Without it a caller that reports an error
+    /// and then refreshes has that error overwritten before it is ever seen.
+    /// </param>
+    private void Refresh(string? keepError = null)
     {
         // First, because filling the sliders below trips UpdateButtons on every one of them.
         _gamePid = CameraSettings.RunningGame()?.Id;
 
-        _onDisk = CameraSettings.Read();
+        // Neither read is guaranteed to succeed — a structurally unreadable file throws rather than
+        // guessing — and this runs from Loaded, where an exception has nowhere to go.
+        string? unreadable = null;
+        try
+        {
+            _onDisk = CameraSettings.Read();
+            _framingOnDisk = CarCameras.Read();
+        }
+        catch (Exception ex)
+        {
+            _onDisk = new CameraReading(new Dictionary<int, float>(), Exists: false);
+            _framingOnDisk = ChaseCamReading.Absent;
+            unreadable = ex.Message;
+        }
+
         foreach ((CameraField field, Slider slider) in _sliders)
         {
             slider.Value = _onDisk.ValueOf(field);
@@ -377,7 +395,6 @@ public sealed partial class CameraPage : Page
             Describe(field, slider, _readouts[field], _feels[field]);
         }
 
-        _framingOnDisk = CarCameras.Read();
         Seed(_framingOnDisk.Near, _framingOnDisk.Far);
 
         // Selecting a preset re-seeds from it, which is a no-op when the file already matches. A file
@@ -385,7 +402,28 @@ public sealed partial class CameraPage : Page
         PresetBox.SelectedItem = _framingOnDisk.Preset?.Name ?? Custom;
         DescribeFraming();
 
-        if (!_onDisk.Exists || !_framingOnDisk.Exists)
+        if (Drift() is { } drift)
+        {
+            FramingNotice.Title = drift.Title;
+            FramingNotice.Message = drift.Message;
+            FramingNotice.IsOpen = true;
+        }
+        else
+        {
+            FramingNotice.IsOpen = false;
+        }
+
+        if (keepError is not null)
+        {
+            // The caller already failed at something the user asked for, and that beats every
+            // standing message below — none of which is news by comparison.
+            Warn("That didn't work", keepError, InfoBarSeverity.Error);
+        }
+        else if (unreadable is not null)
+        {
+            Warn("That file could not be read", unreadable, InfoBarSeverity.Error);
+        }
+        else if (!_onDisk.Exists || !_framingOnDisk.Exists)
         {
             Warn("No settings file yet",
                 Missing() + " Launch the game once so it writes one. This edits the files the game "
@@ -410,6 +448,57 @@ public sealed partial class CameraPage : Page
         UpdateButtons();
     }
 
+    /// <summary>
+    /// Which cars are not on the framing shown, and why that happened.
+    /// </summary>
+    /// <remarks>
+    /// Two explanations, because either one is a lie about the other file. A clear majority with a
+    /// small minority is a content update: the game appends an entry at the car's own default the
+    /// first time you drive it, so the new cars arrive on the shipped framing. A file split many ways
+    /// was tuned car by car — which is exactly what the reference script's output looks like — and
+    /// blaming the game for that one would be false.
+    /// <para>
+    /// ⚠️ Never worded as though the majority is authoritative. It usually is, but a file holding two
+    /// hand-tuned cars and fourteen the game appended has a majority that is exactly backwards, and
+    /// this text plus the confirmation on Apply are the only things between that file and a one-click
+    /// flatten.
+    /// </para>
+    /// </remarks>
+    private (string Title, string Message)? Drift()
+    {
+        if (!_framingOnDisk.Exists || _framingOnDisk.Drifted.Count == 0)
+            return null;
+
+        string shown = _framingOnDisk.Preset?.Name ?? "the framing shown";
+
+        // What they are ON is what says whether Apply is safe to press. Three opaque keys do not.
+        string cause = _framingOnDisk.Framings.Count == 2
+            ? $"They are on {Framing(_framingOnDisk.Framings[1])}. The game adds a car at its own "
+                + "default the first time you drive it, so a game update leaves the new ones behind."
+            : $"This file is split {_framingOnDisk.Framings.Count} ways — it was tuned car by car "
+                + "rather than all at once.";
+
+        return ($"{_framingOnDisk.Drifted.Count} of {_framingOnDisk.Cars.Count} cars are not on {shown}",
+            $"{Listed(_framingOnDisk.Drifted)}. {cause} Apply puts every car in the file on {shown}. "
+                + "A car you have not driven yet is not in the file at all, so this is worth checking "
+                + "before a capture session rather than after an update.");
+    }
+
+    /// <summary>A framing by its preset name, or by the numbers when it is not one.</summary>
+    /// <remarks>
+    /// Written the way the preset table writes them — 1.80 / 5.19 / -5.0 — so a framing with no name
+    /// can still be compared against one by eye.
+    /// </remarks>
+    private static string Framing(ChaseCamFraming framing) =>
+        framing.Preset?.Name
+        ?? $"{framing.Near.Height:0.00} / {framing.Near.Distance:0.00} / {framing.Near.Pitch:0.0}°";
+
+    /// <summary>A few car keys and then a count. Sixteen of them is a wall, not a list.</summary>
+    private static string Listed(IReadOnlyList<string> cars, int cap = 3) =>
+        cars.Count <= cap
+            ? string.Join(", ", cars)
+            : $"{string.Join(", ", cars.Take(cap))} and {cars.Count - cap} more";
+
     /// <summary>Name the file that is missing, because the two are fixed by the same thing.</summary>
     private string Missing() => (_onDisk.Exists, _framingOnDisk.Exists) switch
     {
@@ -418,10 +507,19 @@ public sealed partial class CameraPage : Page
         _ => "The camera settings file is not there yet.",
     };
 
-    /// <summary>Do the sliders say something other than the file they were filled from?</summary>
+    /// <summary>
+    /// Do the sliders say something other than the file they were filled from?
+    /// </summary>
+    /// <remarks>
+    /// ⚠️ The tolerance has to be the one <see cref="ChaseCamSpec.Match"/> uses, not a tighter one.
+    /// Naming a preset re-seeds the sliders from that preset's canonical values, so the sliders can
+    /// hold 5.19 while the file holds the 5.190157 the R34 actually shipped with — and at 1e-4 a
+    /// freshly loaded, untouched file reports an edit nobody made, with Discard lit to undo it.
+    /// Nothing is lost by widening: the coarsest slider step is 0.05, fifty times this.
+    /// </remarks>
     private bool FramingEdited() =>
-        !ViewOf(ChaseCamSpec.NearChase).Matches(_framingOnDisk.Near, 1e-4f)
-        || !ViewOf(ChaseCamSpec.FarChase).Matches(_framingOnDisk.Far, 1e-4f);
+        !ViewOf(ChaseCamSpec.NearChase).Matches(_framingOnDisk.Near, 1e-3f)
+        || !ViewOf(ChaseCamSpec.FarChase).Matches(_framingOnDisk.Far, 1e-3f);
 
     /// <summary>
     /// Is there anything for Apply to do?
@@ -478,6 +576,26 @@ public sealed partial class CameraPage : Page
         bool writeFraming = _framingOnDisk.Exists;
         bool writeBehaviour = _onDisk.Exists;
 
+        // The file disagreeing with itself is the one case where Apply is not obviously the right
+        // thing: the framing on screen is the one MOST cars are on, and "most" is not "intended".
+        // A file holding two hand-tuned cars and fourteen the game appended reads as the fourteen,
+        // and one click would flatten the two. Name both sides and let the choice be made.
+        if (writeFraming && _framingOnDisk.Drifted.Count > 0)
+        {
+            int settled = _framingOnDisk.Cars.Count - _framingOnDisk.Drifted.Count;
+            ChaseCamFraming[] rest = _framingOnDisk.Framings.Skip(1).ToArray();
+            string others = string.Join(", ", rest.Select(f => $"{f.Cars.Count} on {Framing(f)}"));
+
+            if (!await Confirm("Put every car on this framing?",
+                    $"{settled} car(s) in this file are on {Framing(_framingOnDisk.Framings[0])} and "
+                    + $"{others}. Apply puts all {_framingOnDisk.Cars.Count} on the framing shown on "
+                    + "screen, which is the first of those. A copy of the file is kept alongside it "
+                    + "first.", "Apply to all"))
+            {
+                return;
+            }
+        }
+
         await Run(log =>
         {
             int changed = 0;
@@ -519,6 +637,7 @@ public sealed partial class CameraPage : Page
         StatusText.Text = "Saving…";
 
         var lines = new List<string>();
+        string? failure = null;
         try
         {
             int changed = await Task.Run(() => work(lines.Add));
@@ -529,10 +648,12 @@ public sealed partial class CameraPage : Page
         catch (Exception ex)
         {
             StatusText.Text = "";
-            Warn("That didn't work", ex.Message, InfoBarSeverity.Error);
+            failure = ex.Message;
         }
 
-        Refresh();
+        // Handed to Refresh rather than shown before it: Refresh sets the same InfoBar, so reporting
+        // the failure here would have it overwritten by a standing message on the very next line.
+        Refresh(failure);
     }
 
     private async Task<bool> Confirm(string title, string body, string action)

@@ -3,14 +3,30 @@ using EvoMods.Core.Protobuf;
 
 namespace EvoMods.Core.Camera;
 
+/// <summary>One framing found in the file, and every car sitting on it.</summary>
+/// <remarks>
+/// A file normally holds exactly one of these. More than one means the cars disagree — see
+/// <see cref="ChaseCamReading.Uniform"/> for how that happens without anyone doing anything wrong.
+/// </remarks>
+public sealed record ChaseCamFraming(
+    ChaseCamView Near, ChaseCamView Far, IReadOnlyList<string> Cars)
+{
+    /// <summary>The preset this framing is set to, or null for anything else.</summary>
+    public ChaseCamPreset? Preset => ChaseCamSpec.Match(Near, Far);
+}
+
 /// <param name="Cars">Every car key in the file, in file order.</param>
 /// <param name="Representative">
 /// The car <paramref name="Near"/> and <paramref name="Far"/> were read from, or null when the file
 /// is absent.
 /// </param>
-/// <param name="Uniform">
-/// False when the cars do not all agree. Only possible if something other than this app wrote the
-/// file, because every write here covers all of them.
+/// <param name="Drifted">
+/// The cars that are NOT on the framing reported here, in file order. Empty for a file that agrees
+/// with itself.
+/// </param>
+/// <param name="Framings">
+/// Every distinct framing in the file, the one with the best claim to being the file's first. A file
+/// that agrees with itself has exactly one.
 /// </param>
 /// <param name="Exists">False when there is no user file yet.</param>
 public sealed record ChaseCamReading(
@@ -18,15 +34,36 @@ public sealed record ChaseCamReading(
     ChaseCamView Near,
     ChaseCamView Far,
     string? Representative,
-    bool Uniform,
+    IReadOnlyList<string> Drifted,
+    IReadOnlyList<ChaseCamFraming> Framings,
     bool Exists)
 {
-    /// <summary>The preset this file is exactly set to, or null for anything else.</summary>
-    public ChaseCamPreset? Preset => Uniform ? ChaseCamSpec.Match(Near, Far) : null;
+    /// <summary>False when the cars do not all agree.</summary>
+    /// <remarks>
+    /// ⚠️ Not a sign that anything went wrong, and NOT only possible if something other than this app
+    /// wrote the file — every write here covers all of them, so this app cannot cause it. THE GAME
+    /// causes it: it appends an entry at the car's own <c>.actor</c> default the first time you drive
+    /// that car. Every content update therefore adds cars on the shipped framing while the ones
+    /// already tuned stay tuned, nothing surfaces it, and the only symptom is one car looking
+    /// different in a replay — after the recording exists.
+    /// <para>
+    /// Confirmed on <c>0.9.0+release.48</c>: the file went 13 to 16 cars, and the three new entries
+    /// were exactly the three left on Stock.
+    /// </para>
+    /// </remarks>
+    public bool Uniform => Drifted.Count == 0;
+
+    /// <summary>The preset the framing reported here is set to, or null for anything else.</summary>
+    /// <remarks>
+    /// Named even when the cars disagree, because refusing to name it is worse: a file with thirteen
+    /// of sixteen cars on Wide would read "Custom" while showing Wide's exact numbers. Which cars are
+    /// not on it, and what they are on instead, is <see cref="Drifted"/> and <see cref="Framings"/>.
+    /// </remarks>
+    public ChaseCamPreset? Preset => ChaseCamSpec.Match(Near, Far);
 
     /// <summary>What a screen shows before it has read anything.</summary>
     public static ChaseCamReading Absent { get; } = new(
-        [], ChaseCamSpec.Stock.Near, ChaseCamSpec.Stock.Far, null, Uniform: true, Exists: false);
+        [], ChaseCamSpec.Stock.Near, ChaseCamSpec.Stock.Far, null, [], [], Exists: false);
 }
 
 /// <summary>
@@ -44,9 +81,9 @@ public sealed record ChaseCamReading(
 /// packed FOV array, whose bytes happen to parse as a plausible submessage.
 /// </para>
 /// <para>
-/// This file holds twelve cars of hand-tuned work, which is why it gets a preflight, a structural
-/// assert, a backup and a four-part read-back rather than the single verify pass
-/// <see cref="CameraSettings"/> uses on six floats.
+/// This file holds every car you have driven, and all the hand-tuned work on them, which is why it
+/// gets a preflight, a structural assert, a backup and a four-part read-back rather than the single
+/// verify pass <see cref="CameraSettings"/> uses on six floats.
 /// </para>
 /// </remarks>
 public static class CarCameras
@@ -63,19 +100,87 @@ public static class CarCameras
         float[] fov = PackedFloats(FovArray(drivable));
         List<CarEntry> cars = Cars(drivable);
 
-        // Prefer the car every preset was tuned against, so the numbers on screen are the numbers
-        // that were measured. Falls back to the first entry for a file that does not carry it.
-        CarEntry pick = cars.FirstOrDefault(c => c.Key == ChaseCamSpec.ReferenceCar) ?? cars[0];
+        // Once per car. Everything below compares every car against every other, and reading a slot
+        // walks the protobuf.
+        List<(string Key, ChaseCamView Near, ChaseCamView Far)> read = cars
+            .Select(c => (
+                c.Key,
+                Near: ViewOf(c, ChaseCamSpec.NearChase, fov),
+                Far: ViewOf(c, ChaseCamSpec.FarChase, fov)))
+            .ToList();
 
-        ChaseCamView near = ViewOf(pick, ChaseCamSpec.NearChase, fov);
-        ChaseCamView far = ViewOf(pick, ChaseCamSpec.FarChase, fov);
+        List<List<int>> groups = GroupByFraming(read);
 
-        bool uniform = cars.All(c =>
-            ViewOf(c, ChaseCamSpec.NearChase, fov).Matches(near)
-            && ViewOf(c, ChaseCamSpec.FarChase, fov).Matches(far));
+        // Inside a group the reference car speaks for it when it is there, so the numbers on screen
+        // stay the ones every preset was measured against; otherwise the earliest car on that framing.
+        int Speaker(List<int> group) =>
+            group.FirstOrDefault(i => read[i].Key == ChaseCamSpec.ReferenceCar, group[0]);
+
+        var framings = new List<ChaseCamFraming>();
+        foreach (List<int> group in groups)
+        {
+            (_, ChaseCamView groupNear, ChaseCamView groupFar) = read[Speaker(group)];
+            framings.Add(
+                new ChaseCamFraming(groupNear, groupFar, group.Select(i => read[i].Key).ToList()));
+        }
+
+        // By index rather than by key: nothing stops the file carrying the same key twice, and asking
+        // whether a NAME is in the settled group would then clear the drift on both of them.
+        var settled = new bool[read.Count];
+        foreach (int i in groups[0])
+            settled[i] = true;
 
         return new ChaseCamReading(
-            cars.Select(c => c.Key).ToList(), near, far, pick.Key, uniform, Exists: true);
+            read.Select(c => c.Key).ToList(),
+            framings[0].Near,
+            framings[0].Far,
+            read[Speaker(groups[0])].Key,
+            read.Where((_, i) => !settled[i]).Select(c => c.Key).ToList(),
+            framings,
+            Exists: true);
+    }
+
+    /// <summary>
+    /// The cars gathered by where their chase cameras actually sit, best claim to the file first.
+    /// </summary>
+    /// <remarks>
+    /// The majority wins, because a car the game has just appended arrives at its own default while
+    /// the cars that were set deliberately are already there. That is a preference and not a proof —
+    /// a file with two hand-tuned cars and fourteen the game added has a majority that is exactly
+    /// backwards — which is why the caller is expected to REPORT the disagreement rather than quietly
+    /// act on it.
+    /// <para>
+    /// The tie-breaks, in order after size: a framing matching a known preset beats one at arbitrary
+    /// values, which is the reference script's "most common among cars that match a preset" and what
+    /// stops one car at garbage values ever speaking for the file; then the group holding
+    /// <see cref="ChaseCamSpec.ReferenceCar"/>; then the earliest in the file, which is the oldest,
+    /// because entries are APPENDED and so drift arrives at the tail.
+    /// </para>
+    /// </remarks>
+    private static List<List<int>> GroupByFraming(
+        List<(string Key, ChaseCamView Near, ChaseCamView Far)> cars)
+    {
+        var groups = new List<List<int>>();
+        for (int i = 0; i < cars.Count; i++)
+        {
+            // Geometry only. Field of view is one array shared by the whole file, so it is identical
+            // on every car by construction and can never tell two of them apart.
+            List<int>? hit = groups.FirstOrDefault(g =>
+                cars[g[0]].Near.SameGeometry(cars[i].Near)
+                && cars[g[0]].Far.SameGeometry(cars[i].Far));
+
+            if (hit is null)
+                groups.Add([i]);
+            else
+                hit.Add(i);
+        }
+
+        return groups
+            .OrderByDescending(g => g.Count)
+            .ThenByDescending(g => ChaseCamSpec.Match(cars[g[0]].Near, cars[g[0]].Far) is not null)
+            .ThenByDescending(g => g.Any(i => cars[i].Key == ChaseCamSpec.ReferenceCar))
+            .ThenBy(g => g[0])
+            .ToList();
     }
 
     /// <summary>
