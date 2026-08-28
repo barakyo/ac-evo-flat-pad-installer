@@ -586,11 +586,12 @@ public sealed partial class CameraPage : Page
             ChaseCamFraming[] rest = _framingOnDisk.Framings.Skip(1).ToArray();
             string others = string.Join(", ", rest.Select(f => $"{f.Cars.Count} on {Framing(f)}"));
 
+            string shown = Framing(_framingOnDisk.Framings[0]);
+
             if (!await Confirm("Put every car on this framing?",
-                    $"{settled} car(s) in this file are on {Framing(_framingOnDisk.Framings[0])} and "
-                    + $"{others}. Apply puts all {_framingOnDisk.Cars.Count} on the framing shown on "
-                    + "screen, which is the first of those. A copy of the file is kept alongside it "
-                    + "first.", "Apply to all"))
+                    $"{settled} car(s) in this file are on {shown} and {others}. Apply puts all "
+                    + $"{_framingOnDisk.Cars.Count} of them on {shown}, which is what the sliders are "
+                    + "showing. A copy of the file is kept alongside it first.", "Apply to all"))
             {
                 return;
             }
