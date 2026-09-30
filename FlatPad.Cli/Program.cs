@@ -1,5 +1,6 @@
 using EvoMods.Core.FlatPad;
 using EvoMods.Core.Game;
+using EvoMods.Core.Tracks;
 
 // Development entry point. Not shipped — the distributable is the WinForms app; this exists so the
 // logic can be exercised, and diffed against the Python reference implementation, without a GUI.
@@ -16,6 +17,16 @@ const string Usage = """
       revert [--archive F]       put the archive back (--archive picks one if several exist)
                                  (--archive also names the stock reference for verify/repair)
       check-unpack [--archive F] sample the loose files against the archive they came from
+      dump-track-rows [--name N] a track's rows in both registries (no name: list the catalog)
+
+    Custom tracks — a .zip or folder holding content\tracks\<id>\:
+
+      inspect-track --input F    what installing it would do, without doing it
+      install-track --input F [--name N] [--layout-name N] [--replace]
+                                 install + register (--replace takes over another tool's
+                                 registration of the same track folder)
+      uninstall-track --id ID    remove one this tool installed
+      list-tracks                every track this tool installed, checked
 
     Standalone packages — a car mod, or any .kspkg. These need no game folder:
 
@@ -38,6 +49,10 @@ string? gameRoot = null;
 string? archive = null;
 string? input = null;
 string? outDir = null;
+string? name = null;
+string? layoutName = null;
+string? trackId = null;
+bool replace = false;
 for (int i = 1; i < args.Length; i++)
 {
     switch (args[i])
@@ -53,6 +68,18 @@ for (int i = 1; i < args.Length; i++)
             break;
         case "--out" when i + 1 < args.Length:
             outDir = args[++i];
+            break;
+        case "--name" when i + 1 < args.Length:
+            name = args[++i];
+            break;
+        case "--layout-name" when i + 1 < args.Length:
+            layoutName = args[++i];
+            break;
+        case "--id" when i + 1 < args.Length:
+            trackId = args[++i];
+            break;
+        case "--replace":
+            replace = true;
             break;
         default:
             Console.Error.WriteLine($"unrecognised argument: {args[i]}");
@@ -122,6 +149,77 @@ try
             RequireUnpackedContent(gameRoot);
             new Installer(gameRoot, Console.Out.WriteLine).Uninstall();
             return 0;
+
+        case "dump-track-rows":
+            RequireUnpackedContent(gameRoot);
+            foreach (string line in name is null ? TrackRows.CatalogNames(gameRoot) : TrackRows.Describe(gameRoot, name))
+                Console.WriteLine(line);
+            return 0;
+
+        case "inspect-track":
+        case "install-track":
+        {
+            if (input is null)
+            {
+                Console.Error.WriteLine($"{command} needs --input <file.zip | folder>");
+                return 2;
+            }
+
+            using TrackPackage package = TrackPackage.Open(input);
+            if (layoutName is not null && package.Layouts.Count != 1)
+            {
+                Console.Error.WriteLine($"--layout-name needs a single-layout track; this one has {package.Layouts.Count}");
+                return 2;
+            }
+
+            var installer = new TrackInstaller(gameRoot, Console.Out.WriteLine);
+            TrackInstallPlan plan = installer.Plan(package, new TrackInstallOptions(name,
+                layoutName is null ? null : new Dictionary<string, string> { [package.Layouts[0].Id] = layoutName },
+                replace), cancel.Token);
+            PrintPlan(plan);
+            if (!plan.CanInstall)
+                return 1;
+            if (command == "inspect-track")
+                return 0;
+
+            Console.WriteLine();
+            installer.Install(plan, new InlineProgress<(int Done, int Total)>(p =>
+                Console.Write($"\rCopying… {p.Done:N0}/{p.Total:N0} files   ")), cancel.Token);
+            return 0;
+        }
+
+        case "uninstall-track":
+            if (trackId is null)
+            {
+                Console.Error.WriteLine("uninstall-track needs --id <track id>");
+                return 2;
+            }
+
+            new TrackInstaller(gameRoot, Console.Out.WriteLine).Uninstall(trackId);
+            return 0;
+
+        case "list-tracks":
+        {
+            var installer = new TrackInstaller(gameRoot, Console.Out.WriteLine);
+            List<(LedgerTrack Track, CustomTrackState State)> tracks = installer.List();
+            if (tracks.Count == 0)
+                Console.WriteLine("no custom tracks installed");
+            int failures = 0;
+            foreach ((LedgerTrack t, CustomTrackState state) in tracks)
+            {
+                Console.WriteLine($"{t.DisplayName}  ({t.TrackId}{(t.Version is null ? "" : $" {t.Version}")})  {state}");
+                foreach (LedgerLayout l in t.Layouts)
+                    Console.WriteLine($"  '{l.Code}'  id {l.RegistryId}  index {l.MenuIndex}  {string.Join(", ", l.Sessions)}");
+                List<string> problems = state == CustomTrackState.Installed ? installer.Verify(t) : [];
+                foreach (string p in problems)
+                    Console.WriteLine($"  FAIL {p}");
+                if (state == CustomTrackState.Installed && problems.Count == 0)
+                    Console.WriteLine($"  PASS rows, numbers, containers and {t.Files.Count} file hashes");
+                failures += problems.Count + (state == CustomTrackState.Installed ? 0 : 1);
+            }
+
+            return failures == 0 ? 0 : 1;
+        }
 
         case "unpack":
         {
@@ -281,6 +379,30 @@ static int Status(string gameRoot)
     return 0;
 }
 
+static void PrintPlan(TrackInstallPlan plan)
+{
+    TrackPackage p = plan.Package;
+    Console.WriteLine($"Track    {plan.DisplayName}  ({p.TrackId}{(p.Version is null ? "" : $", {p.Version}")})"
+                      + (plan.IsReinstall ? "  — reinstall" : ""));
+    Console.WriteLine($"Files    {p.Files.Count:N0}, {GameArchive.Bytes(p.TotalBytes)}"
+                      + (p.FullyChecksummed ? ", all checksummed" : "")
+                      + (p.Ignored.Count > 0 ? $"  ({p.Ignored.Count} package file(s) outside the track, not installed)" : ""));
+    foreach (LayoutRegistration l in plan.Layouts)
+    {
+        Console.WriteLine($"Layout   '{l.Code}' (layout_{l.Layout.Id})  {l.GridSize} car(s)  "
+                          + string.Join(", ", TrackRegistrar.SessionsFor(l)));
+        foreach ((string kind, string rel) in l.Layout.Containers)
+            Console.WriteLine($"           {kind,-20} {rel}");
+    }
+
+    foreach (string w in plan.Warnings)
+        Console.WriteLine($"  ⚠ {w}");
+    foreach (string m in plan.MissingReferences.Take(10))
+        Console.WriteLine($"      missing: {m}");
+    foreach (string problem in plan.Problems)
+        Console.WriteLine($"  ✗ {problem}");
+}
+
 static void RequireUnpackedContent(string gameRoot)
 {
     if (!Directory.Exists(Path.Combine(gameRoot, "content", "tracks")))
@@ -298,4 +420,9 @@ static IProgress<UnpackProgress> Bar(string label) => new InlineProgress(p =>
 internal sealed class InlineProgress(Action<UnpackProgress> write) : IProgress<UnpackProgress>
 {
     public void Report(UnpackProgress value) => write(value);
+}
+
+internal sealed class InlineProgress<T>(Action<T> write) : IProgress<T>
+{
+    public void Report(T value) => write(value);
 }

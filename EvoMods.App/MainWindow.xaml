@@ -39,6 +39,11 @@
                     <FontIcon Glyph="&#xE9D9;" />
                 </NavigationViewItem.Icon>
             </NavigationViewItem>
+            <NavigationViewItem Content="Tracks" Tag="tracks">
+                <NavigationViewItem.Icon>
+                    <FontIcon Glyph="&#xE81E;" />
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
             <NavigationViewItem Content="Filters" Tag="filters">
                 <NavigationViewItem.Icon>
                     <FontIcon Glyph="&#xE790;" />

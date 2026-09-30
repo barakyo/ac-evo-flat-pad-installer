@@ -8,6 +8,7 @@ capture.
 | --- | --- |
 | **Game content** | Unpack the game so mods load at all, revert it, or take any `.kspkg` apart. |
 | **Flat Pad** | A 1.5 km dead-flat, wall-free test track, derived on your machine from your own game files. |
+| **Tracks** | Install a custom track from a `.zip` or folder — drop it on the page — and register it so it appears in the menus. |
 | **Filters** | Show the nine filters EVO ships hidden; install five built for video capture. |
 | **Camera** | Five chase-camera presets, the eight values behind them, and the settle time shown next to every value. |
 
@@ -53,6 +54,41 @@ files is not enough on its own: a track only appears in the menus once it is reg
 Install stays available in every state, because it is also the repair action. A game update re-packs
 the game and restores stock content, and re-running install is the documented fix — so the label
 changes rather than the button greying out.
+
+## Custom tracks
+
+Drop a `.zip` or a folder on the Tracks page, or choose one. It accepts the layout EvoForge produces —
+`content\tracks\<id>\<id>.scene` plus `containers\layout_<name>.scene` — at any depth, so an archive
+with an extra wrapper folder still works. Before anything is written it shows the file count and size,
+the name and layout name it will register (both editable), the sessions each layout gets, and anything
+worth knowing, such as a missing AI line.
+
+The files go to the **game folder**, `content\tracks\<id>`, not `Saved Games\ACE\mods\` — tracks do not
+load from there, whatever a download's README says. Like Flat Pad, it needs the game unpacked.
+
+A converted track ships **no registry entries**, so they are built here. Rows are cloned from Sebring's,
+as every row this tool writes is, but every field that names the track is then set outright, and each
+session's container list is rebuilt from the files the package actually contains. Kunos suffixes every
+container with its layout (`timelines_gp.scene`); EvoForge suffixes only the layout itself
+(`timelines.scene`), and a row naming a file the track lacks is a path to nothing. Each layout gets
+**Time Attack** (which is what Practice reads), **Hotstint** if it ships a hotlap spawn, and **No Game
+Mode**. Race is left out, as it is for Flat Pad. The car count is the track's own grid.
+
+Three safeguards:
+
+- **Only its own rows are ever removed.** Every install is recorded in `<game>\evomods\tracks.json`,
+  and a row counts as this tool's only when its name *and* its recorded id match. Another tool that
+  registered the same name keeps its rows — unless you tick the box to replace a registration of the
+  same track folder, which can never extend to a different track.
+- **A damaged download installs nothing.** When the package carries a `SHA256SUMS.txt`, every file is
+  checked as it is copied, into a staging folder that is only swapped in once all of them pass.
+- **A game patch is repairable without the zip.** Patches revert `system\` but leave `content\tracks\`
+  alone; the page reports that as *files present, not registered*, and **Repair** re-registers from
+  the files on disk, under the same names and numbers.
+
+Confirmed in game with [HDC Drift Park](https://www.reddit.com/r/assettocorsaevo/comments/1wpy6ub/introducing_hinas_drift_club_three_drift_cars/)
+on `0.9.1`: loads in Practice and drives. Uninstall returns both registries **byte-identical** to
+before.
 
 ## Post-processing filters
 
@@ -287,6 +323,13 @@ dotnet run --project FlatPad.Cli -- uninstall
 dotnet run --project FlatPad.Cli -- revert
 dotnet run --project FlatPad.Cli -- check-unpack
 
+# custom tracks
+dotnet run --project FlatPad.Cli -- inspect-track   --input "<file.zip | folder>"
+dotnet run --project FlatPad.Cli -- install-track   --input "<file.zip | folder>" [--name N] [--layout-name N] [--replace]
+dotnet run --project FlatPad.Cli -- uninstall-track --id <track id>
+dotnet run --project FlatPad.Cli -- list-tracks
+dotnet run --project FlatPad.Cli -- dump-track-rows [--name "<display name>"]
+
 # standalone packages — these need no game folder at all
 dotnet run --project FlatPad.Cli -- inspect-package --input "<file.kspkg>"
 dotnet run --project FlatPad.Cli -- unpack-package  --input "<file.kspkg>" --out "<dir>"
@@ -298,7 +341,10 @@ finds nothing to check would otherwise print a cheerful `PASS`. `check-unpack` s
 against the archive they came from, which is how you tell a finished unpack from one that quietly ran
 out of disk.
 
-It covers Flat Pad and the archive only. Filters and camera are exercised by the test suite instead.
+It covers Flat Pad, custom tracks and the archive. Filters and camera are exercised by the test suite instead.
+
+`dump-track-rows` prints a track's rows in both registries — the quickest way to see what another
+tool (EvoForge) registered, or what a working base-game entry looks like.
 
 ### The retired WinForms installer
 
@@ -326,7 +372,8 @@ The Python and PowerShell references stay authoritative until each port is confi
 | Self-update | 0.3.0 installed by hand, then updated to 0.4.0 over the network from GitHub Releases and relaunched. |
 | Chase camera framing | `Wide` applied from the app to the real 12-car file. The reference script's own diff reports exactly the 22 near/far slots changed, **no driven view touched**, and no entry added or removed; its frame-layout figures agree to 0.01 pt. Live file restored byte-identical afterwards. |
 | Drift detection | Read against the real 16-car v0.9 file: reports `Wide`, no drift, agreeing with the reference script's own `-Audit` car for car. Against a copy with three cars put back to Stock — the R34 among them — it names those three and falls back to the majority rather than letting the reference car misreport the file. A real 12-car backup from before the app existed reports all 12 framings. |
-| Unit tests | **296**, covering the protobuf layer, the closure crawl, the geometry edits, the archive state machine, progress throttling, registry integrity, the filter table and install plan, and both camera settings files. |
+| Custom track | HDC Drift Park installed from its zip, loaded and driven in Practice. Uninstalled through the app: both registries back **byte-identical** to their pre-install hashes; reinstalled through the picker onto the same id and index. |
+| Unit tests | **315**, covering the protobuf layer, the closure crawl, the geometry edits, the archive state machine, progress throttling, registry integrity, custom track packages and registration, the filter table and install plan, and both camera settings files. |
 
 **Console divergence from the Python.** The reference implementation is behind: the five bugs a
 real-world v0.8.1 run exposed were fixed here and never back-ported, and it cannot read a `.kspkg` at
@@ -345,6 +392,7 @@ that matters, and it is unaffected: all 1530 bytes still agree.
 | `EvoMods.Core/Tables` | The `system\*.table` registry editor. |
 | `EvoMods.Core/Game` | Finding the install, switching it between packed and unpacked, reading stock files back out of the archive, and unpacking a standalone `.kspkg`. |
 | `EvoMods.Core/FlatPad` | The Flat Pad recipe: build, install, uninstall, verify, repair. |
+| `EvoMods.Core/Tracks` | Custom tracks: reading a zip or folder, building registry rows from what it ships, the ownership ledger. |
 | `EvoMods.Core/Filters` | Post-processing filters: reading `post_processing.table`, showing the ones the game hides, and installing the filters carried in `Filters/Assets`. |
 | `EvoMods.Core/Camera` | The camera settings the game actually honours, edited in place so unknown fields survive — behaviour in `camerasettings.camerasettings`, framing and the presets in `CarCameras.carcamerausersettings`. |
 | `EvoMods.App` | The WinUI 3 GUI — a shell and a page per feature, no logic of its own. |

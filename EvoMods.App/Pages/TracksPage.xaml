@@ -1,0 +1,78 @@
+<Page
+    x:Class="EvoMods.App.Pages.TracksPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    mc:Ignorable="d"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+
+    <Grid Padding="28" RowSpacing="16" AllowDrop="True" DragOver="OnDragOver" Drop="OnDrop">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="Tracks" Style="{StaticResource TitleTextBlockStyle}"
+                       FontFamily="{StaticResource BrandDisplayFont}" FontSize="34"
+                       CharacterSpacing="20" />
+            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Install a custom track from a .zip or an extracted folder: its files are copied into the game and it is registered, so it appears in the track list. Drop one anywhere on this page." />
+        </StackPanel>
+
+        <InfoBar x:Name="Notice" Grid.Row="1" IsOpen="False" IsClosable="True" />
+
+        <Border Grid.Row="2" x:Name="DropZone" CornerRadius="8" Padding="20" BorderThickness="1"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <FontIcon Grid.Column="0" Glyph="&#xE896;" FontSize="28"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Text="Drop a track here" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Text="A .zip or folder containing content\tracks\&lt;track&gt;\ — the layout EvoForge produces. You see what it holds before anything is written." />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="PickZipButton" Content="Choose .zip…" Click="OnPickZip"
+                            Style="{StaticResource AccentButtonStyle}" />
+                    <Button x:Name="PickFolderButton" Content="Choose folder…" Click="OnPickFolder" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="3" Spacing="8">
+            <TextBlock Text="Installed" Style="{StaticResource BodyStrongTextBlockStyle}" />
+            <TextBlock x:Name="EmptyText" Style="{StaticResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="No custom tracks installed yet." />
+            <StackPanel x:Name="TrackList" Spacing="8" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="4" x:Name="ProgressPanel" Spacing="6" Visibility="Collapsed">
+            <ProgressBar x:Name="Bar" Height="6" Maximum="100" />
+            <TextBlock x:Name="ProgressText" Style="{StaticResource CaptionTextBlockStyle}" />
+        </StackPanel>
+
+        <Border Grid.Row="5" CornerRadius="8" Padding="12" BorderThickness="1" MinHeight="120"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}">
+            <ScrollViewer x:Name="LogScroller" VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="LogText" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+                           FontFamily="Consolas" FontSize="12"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Page>

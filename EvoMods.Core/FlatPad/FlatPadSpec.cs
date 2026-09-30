@@ -40,7 +40,7 @@ public static class FlatPadSpec
     /// (track, layout) pairs, and a hardcoded 37 — correct when Sebring held the maximum of 36 —
     /// silently displaced Kyalami in the menus the moment v0.8.1 added it at 37.
     /// </remarks>
-    public const ulong NewTrackIdFloor = 26001;
+    public const ulong NewTrackIdFloor = Tables.RegistryNumbers.NewTrackIdFloor;
 
     /// <summary>
     /// Session entries to register, by their donor name in <c>track_containers.table</c>.

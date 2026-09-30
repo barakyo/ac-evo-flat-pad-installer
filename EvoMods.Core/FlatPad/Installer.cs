@@ -12,8 +12,8 @@ namespace EvoMods.Core.FlatPad;
 /// <remarks>
 /// The track is never shipped — everything it writes is derived from Kunos assets, so each user
 /// builds it from their own install. Base-game tracks are left byte-identical to what Kunos ships,
-/// and the two <c>system\*.table</c> registries are always rebuilt from a <c>.orig</c> snapshot
-/// rather than appended to in place, which is what makes re-running unable to stack duplicates.
+/// and registering strips this tool's own rows out of the LIVE <c>system\*.table</c> registries
+/// before adding them back, which is what makes re-running unable to stack duplicates.
 ///
 /// Port of <c>install()</c> / <c>uninstall()</c> in <c>tracks/install_flatpad.py</c>.
 /// </remarks>
@@ -114,43 +114,18 @@ public sealed class Installer(string gameRoot, Action<string> log)
     /// Removing our own entries from the live table gets the same idempotency without ever
     /// discarding someone else's work.
     /// </remarks>
-    private (List<PbNode> Tree, int Removed) LoadTableWithoutOurEntries(
+    private (List<PbNode> Tree, int Removed, (ulong Id, ulong Index)? Previous) LoadTableWithoutOurEntries(
         string reference, Func<PbNode, bool> isOurs)
     {
         List<PbNode> tree = PbTree.ParseTree(File.ReadAllBytes(Rp(reference)));
+        (ulong, ulong)? previous = RegistryNumbers.Of(TableEditor.TableEntries(tree).Entries.Where(isOurs));
         int removed = TableEditor.RemoveTableEntries(tree, isOurs);
-        return (tree, removed);
+        return (tree, removed, previous);
     }
 
     private static bool IsOurCatalogEntry(PbNode e) => TableEditor.TextAt(e, 2, 1) == DstDisplay;
 
     private static bool IsOurSessionEntry(PbNode e) => TableEditor.TextAt(e, 8, 10) == DstDisplay;
-
-    /// <summary>
-    /// Pick registry numbers that are free in THIS install's table.
-    /// </summary>
-    /// <remarks>
-    /// ⚠️ These were hardcoded (id 26001, index 37) from the table as it stood in one game version.
-    /// <c>[8.21]</c> is a dense global index over (track, layout) pairs, so the next game update to
-    /// add a track takes the next number — and v0.8.1 did exactly that, putting Kyalami on 37 and
-    /// making Flat Pad displace it in the menus. Allocate above whatever is actually there.
-    /// </remarks>
-    private static (ulong Id, ulong Index) AllocateRegistryNumbers(List<PbNode> entries)
-    {
-        ulong maxId = 0;
-        ulong maxIndex = 0;
-        foreach (PbNode e in entries)
-        {
-            if (TableEditor.Child(e, 8, 8) is { } id)
-                maxId = Math.Max(maxId, id.Varint);
-            if (TableEditor.Child(e, 8, 21) is { } index)
-                maxIndex = Math.Max(maxIndex, index.Varint);
-        }
-
-        // Leave the ids well clear of the base game's block so an update growing into ours is
-        // obvious rather than silent; the index has to be exactly the next one, it is dense.
-        return (Math.Max(maxId + 1, NewTrackIdFloor), maxIndex + 1);
-    }
 
     /// <summary>
     /// Put Flat Pad into the two registries, replacing any entries of ours already there.
@@ -164,7 +139,7 @@ public sealed class Installer(string gameRoot, Action<string> log)
         List<(string Old, string New)> repl = EntryReplacements();
 
         // --- tracks.table: the catalog entry
-        (List<PbNode> tree, int removed) = LoadTableWithoutOurEntries(TracksTable, IsOurCatalogEntry);
+        (List<PbNode> tree, int removed, _) = LoadTableWithoutOurEntries(TracksTable, IsOurCatalogEntry);
         (_, List<PbNode> entries) = TableEditor.TableEntries(tree);
         PbNode? template = entries.FirstOrDefault(e => TableEditor.TextAt(e, 2, 1) == SrcDisplay);
         if (template is null)
@@ -179,7 +154,7 @@ public sealed class Installer(string gameRoot, Action<string> log)
             + (removed > 0 ? $" (replaced {removed} previous entr{(removed == 1 ? "y" : "ies")})" : ""));
 
         // --- track_containers.table: one entry per session (this is what the menu enumerates)
-        (tree, removed) = LoadTableWithoutOurEntries(ContainersTable, IsOurSessionEntry);
+        (tree, removed, (ulong, ulong)? previous) = LoadTableWithoutOurEntries(ContainersTable, IsOurSessionEntry);
         (_, entries) = TableEditor.TableEntries(tree);
         var donor = new Dictionary<string, PbNode>(StringComparer.Ordinal);
         foreach (PbNode e in entries)
@@ -199,7 +174,7 @@ public sealed class Installer(string gameRoot, Action<string> log)
                 $"{SrcDisplay} has no session entries named {PyFormat.Repr(missing)} in {ContainersTable}");
         }
 
-        (ulong id, ulong index) = AllocateRegistryNumbers(entries);
+        (ulong id, ulong index) = RegistryNumbers.Allocate(entries, previous: previous);
         foreach (string session in Sessions)
             TableEditor.AppendTableEntry(tree, donor[session], repl, [([8, 8], id), ([8, 21], index)]);
 
